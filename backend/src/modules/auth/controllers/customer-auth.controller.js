@@ -3,7 +3,7 @@
  * ============================================================================
  *
  *   POST   /api/auth/register   step 01 of signup, commits on its own
- *   POST   /api/auth/login      identifier only - see auth.module.js
+ *   POST   /api/auth/login      identifier + password
  *   POST   /api/auth/logout
  *   GET    /api/auth/me         answers { customer: null } for a non-customer session
  *   PATCH  /api/auth/me         edit my own details, role_id refused
@@ -22,6 +22,7 @@ const { normalizePhone, normalizeEmail, looksLikeEmail } = require('../domain/id
 const { addressForUser } = require('../infrastructure/profile.repository');
 const { publicProfile } = require('../services/profile-view.service');
 const { resolveIdentifier, startSession } = require('../services/session.service');
+const { passwordProblem, hashCustomerPassword, verifyCustomerPassword } = require('../services/customer-password.service');
 const { authLimiter } = require('../infrastructure/auth-rate-limit');
 
 /** @returns {import('express').Router} */
@@ -42,6 +43,7 @@ function customerAuthController() {
         const phone = trimmed(req.body.phone);
         const company = trimmed(req.body.company);
         const phoneDigits = normalizePhone(phone);
+        const password = req.body && req.body.password;
 
         if (!name) return res.status(400).json({ field: 'name', error: "Enter your name." });
         if (!email) return res.status(400).json({ field: 'email', error: "Enter an email address." });
@@ -52,6 +54,8 @@ function customerAuthController() {
         if (phoneDigits.length < 7) {
             return res.status(400).json({ field: 'phone', error: "Enter a phone number we can reach you on." });
         }
+        const passwordError = passwordProblem(password);
+        if (passwordError) return res.status(400).json({ field: 'password', error: passwordError });
         try {
             // Checked before inserting so the customer gets the message against
             // the field that caused it. The unique indexes are still what makes
@@ -76,7 +80,8 @@ function customerAuthController() {
                 email: email,
                 phone_number: phone,
                 phone_normalized: phoneDigits,
-                company: company || null
+                company: company || null,
+                password_hash: await hashCustomerPassword(password)
             };
 
             // Never from the request. A role_id in the body is the one field that
@@ -108,6 +113,7 @@ function customerAuthController() {
     // ---- Sign in ---------------------------------------------------------------
     router.post('/api/auth/login', authLimiter, async (req, res) => {
         const identifier = trimmed(req.body.identifier);
+        const password = req.body && req.body.password;
 
         if (!identifier) {
             return res.status(400).json({ field: 'identifier', error: "Enter your email or phone number." });
@@ -118,6 +124,8 @@ function customerAuthController() {
         if (!looksLikeEmail(identifier) && normalizePhone(identifier).length < 7) {
             return res.status(400).json({ field: 'identifier', error: "Enter a valid phone number, or use your email." });
         }
+        const passwordError = passwordProblem(password);
+        if (passwordError) return res.status(400).json({ field: 'password', error: passwordError });
         try {
             const profile = await resolveIdentifier(identifier);
 
@@ -144,11 +152,9 @@ function customerAuthController() {
 
             // ONLY A CUSTOMER COMES THROUGH THIS DOOR.
             //
-            // This route asks for an identifier and no secret at all, which is
-            // safe precisely because everything it can open is a storefront
-            // account. A row that is not a customer is refused here rather
-            // than being handed a session that later checks would have to
-            // catch — and it is refused for the account, not for the role.
+            // A row that is not a customer is refused here rather than being
+            // handed a session that later checks would have to catch — and it
+            // is refused for the account, not for the role.
             //
             // THE ANSWER SAYS NOTHING ABOUT WHY. An earlier version replied
             // "that is an administrator account", with a flag the account
@@ -164,6 +170,23 @@ function customerAuthController() {
                 return res.status(403).json({
                     field: 'identifier',
                     error: "That account cannot be used to sign in here."
+                });
+            }
+
+            // A profile created while identifier-only access was enabled may
+            // have no hash. Never turn that legacy state into a password bypass:
+            // it stays locked until its credential is reset out of band.
+            if (!profile.password_hash) {
+                return res.status(403).json({
+                    field: 'password',
+                    error: "This account needs a password reset before it can sign in. Contact us for help."
+                });
+            }
+
+            if (!await verifyCustomerPassword(password, profile.password_hash)) {
+                return res.status(401).json({
+                    field: 'password',
+                    error: "That password is not correct."
                 });
             }
 

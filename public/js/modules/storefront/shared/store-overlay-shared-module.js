@@ -262,11 +262,13 @@
     function textFieldHTML(options) {
         const id = options.id;
         const locked = options.readonly === true;
+        const autocomplete = options.autocomplete || 'srk-no-autofill';
+        const passwordManager = options.autocomplete ? ' data-srk-password-manager="allow"' : '';
 
         return [
             '<div>',
             '    ' + labelHTML(id, options.label, options.required),
-            '    <input autocomplete="srk-no-autofill" spellcheck="false" id="' + id + '" name="' + id + '"',
+            '    <input autocomplete="' + escapeHtml(autocomplete) + '"' + passwordManager + ' spellcheck="false" id="' + id + '" name="' + id + '"',
             '           type="' + (options.type || 'text') + '" placeholder="' + escapeHtml(options.placeholder || '') + '"',
             '           value="' + escapeHtml(options.value || '') + '"',
             (options.inputmode ? '           inputmode="' + escapeHtml(options.inputmode) + '"' : ''),

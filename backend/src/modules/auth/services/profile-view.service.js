@@ -5,8 +5,8 @@
  * THE DTO BOUNDARY, and the one place in this application where the doctrine's
  * "never return an entity from a controller" rule is doing visible work.
  *
- * A user_profiles row carries role_id, is_blocked, blocked_at,
- * a second-factor secret. publicProfile() is what stops
+ * A user_profiles row carries role_id, is_blocked, blocked_at and a password
+ * hash. publicProfile() is what stops
  * any of that reaching a browser: every storefront route that answers with an
  * account answers with THIS shape, so there is one place to check rather than
  * five.

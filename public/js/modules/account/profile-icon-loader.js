@@ -16,7 +16,7 @@
  *
  * The states are the same four; everything under them is different. The data
  * now comes from the real `/api/auth/*` routes through
- * customer-session-module.js; customer access is identifier-based.
+ * customer-session-module.js; customer access requires a password.
  *
  * WHY THE CENTRED MODAL IS GONE
  * -----------------------------
@@ -165,21 +165,22 @@
     // ------------------------------------------------------------------
     // STATE — sign in
     // ------------------------------------------------------------------
-    // Customer access is identifier-only.
+    // The identifier selects the account; the password proves access to it.
     function signInHTML() {
         return [
-            '<form autocomplete="srk-no-autofill" id="account-form" novalidate class="flex flex-col min-h-full">',
+            '<form autocomplete="on" data-srk-password-manager="allow" id="account-form" novalidate class="flex flex-col min-h-full">',
             '    <div class="' + SHELL + ' py-10 flex-1 max-w-xl">',
             '        <section class="mb-4">',
-            '            ' + sectionHeading('01', 'Sign In', 'Use the email or phone number on your account'),
+            '            ' + sectionHeading('01', 'Sign In', 'Use your account identifier and password'),
             '            <div class="grid grid-cols-1 gap-5">',
-            '                ' + textFieldHTML({ id: 'account-identifier', label: 'Email or Phone Number', placeholder: 'you@business.com or +91 98765 43210', required: true }),
+            '                ' + textFieldHTML({ id: 'account-identifier', label: 'Email or Phone Number', placeholder: 'you@business.com or +91 98765 43210', required: true, autocomplete: 'username' }),
+            '                ' + textFieldHTML({ id: 'account-password', label: 'Password', type: 'password', placeholder: 'Your password', required: true, maxlength: 128, autocomplete: 'current-password' }),
             '            </div>',
             '            ' + bannerHTML('account-form-error'),
             '            ' + switchLineHTML("Don't have an account?", 'Create one', 'account-switch'),
             '        </section>',
             '    </div>',
-            '    ' + footerHTML({ id: 'account-submit', label: 'Sign In', note: 'Use the email or phone number registered to the account.' }),
+            '    ' + footerHTML({ id: 'account-submit', label: 'Sign In', note: 'Use the password created for this account.' }),
             '</form>'
         ].join('\n');
     }
@@ -196,16 +197,18 @@
         const given = prefill || {};
 
         return [
-            '<form autocomplete="srk-no-autofill" id="account-form" novalidate class="flex flex-col min-h-full">',
+            '<form autocomplete="on" data-srk-password-manager="allow" id="account-form" novalidate class="flex flex-col min-h-full">',
             '    <div class="' + SHELL + ' py-10 flex-1 max-w-xl">',
             '        ' + stepperHTML(0),
             '        <section class="mb-4">',
             '            ' + sectionHeading('01', 'Contact Information', 'How we reach you about an order'),
             '            <div class="grid grid-cols-1 gap-5">',
             '                ' + textFieldHTML({ id: 'account-name', label: 'Full Name', placeholder: 'Your name', required: true }),
-            '                ' + textFieldHTML({ id: 'account-email', label: 'Email Address', type: 'email', placeholder: 'you@business.com', required: true, value: given.email || '' }),
+            '                ' + textFieldHTML({ id: 'account-email', label: 'Email Address', type: 'email', placeholder: 'you@business.com', required: true, value: given.email || '', autocomplete: 'username' }),
             '                ' + textFieldHTML({ id: 'account-phone', label: 'Phone Number', type: 'tel', placeholder: '+91 98765 43210', required: true, value: given.phone || '' }),
             '                ' + textFieldHTML({ id: 'account-company', label: 'Business Name', placeholder: 'Optional' }),
+            '                ' + textFieldHTML({ id: 'account-password', label: 'Create Password', type: 'password', placeholder: 'At least 8 characters', required: true, maxlength: 128, autocomplete: 'new-password' }),
+            '                ' + textFieldHTML({ id: 'account-password-confirm', label: 'Confirm Password', type: 'password', placeholder: 'Type it again', required: true, maxlength: 128, autocomplete: 'new-password' }),
             '            </div>',
             '            ' + bannerHTML('account-form-error'),
             '            ' + switchLineHTML('Already have an account?', 'Sign in', 'account-switch'),
@@ -403,6 +406,8 @@
     const PROFILE_REQUIRED = [
         { id: 'account-name', message: 'Enter your name.' },
         { id: 'account-phone', message: 'Enter a phone number we can reach you on.' },
+        { id: 'account-password', message: 'Enter a password.' },
+        { id: 'account-password-confirm', message: 'Confirm your password.' },
         { id: 'account-address', message: 'Enter a street address.' },
         { id: 'account-city', message: 'Enter a city.' },
         { id: 'account-state', message: 'Enter a state.' },
@@ -677,8 +682,9 @@
         setBusy(true, 'Signing in…');
 
         const identifier = document.getElementById('account-identifier').value.trim();
+        const password = document.getElementById('account-password').value;
 
-        const result = await account.signIn({ identifier });
+        const result = await account.signIn({ identifier, password });
 
         if (!handle) return;   // closed while we were away
 
@@ -728,13 +734,24 @@
             return;
         }
 
+        const password = document.getElementById('account-password').value;
+        const confirmation = document.getElementById('account-password-confirm').value;
+        if (password !== confirmation) {
+            const field = document.getElementById('account-password-confirm');
+            fieldError(field, 'Passwords do not match.');
+            field.focus({ preventScroll: true });
+            showBanner('Check the highlighted fields and try again.');
+            return;
+        }
+
         setBusy(true, 'Creating…');
 
         const result = await account.signUp({
             name: document.getElementById('account-name').value.trim(),
             email: document.getElementById('account-email').value.trim(),
             phone: document.getElementById('account-phone').value.trim(),
-            company: document.getElementById('account-company').value.trim()
+            company: document.getElementById('account-company').value.trim(),
+            password
         });
 
         if (!handle) return;

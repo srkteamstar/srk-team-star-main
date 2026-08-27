@@ -18,10 +18,10 @@
  * from a request body.
  *
  * A GUEST CHECKOUT CREATES THE ACCOUNT THE ORDER NEEDS, because orders.user_id
- * is NOT NULL - and it REFUSES A NON-CUSTOMER PROFILE outright. Without that
- * guard this public form could mint a privileged session with no role check
- * at all. A session this application did not open is treated as a guest for
- * the same reason.
+ * is NOT NULL. It requires a password for that new account and refuses to
+ * adopt any existing profile: returning customers authenticate through the
+ * rate-limited auth door before checking out. A session this application did
+ * not open is treated as a guest for the same reason.
  */
 const express = require('express');
 const { supabase } = require('../../../core/database/supabase');
@@ -33,7 +33,15 @@ const { EMAIL_PATTERN, MAX_LENGTHS, tooLong, trimmed } = require('../../../share
 const { CURRENCY, PAYMENT_STATUS, PAYMENT_METHODS, PAYMENT_MODES } = require('../../../shared/contracts/payment');
 const { ORDER_STATUS_AWAITING_PAYMENT, ORDER_STATUS_PLACED } = require('../../../shared/contracts/order-status');
 const { orderReference } = require('../../../shared/contracts/order-reference');
-const { normalizePhone, normalizeEmail, addressForUser, publicProfile, startSession } = require('../../auth/auth.public');
+const {
+    normalizePhone,
+    normalizeEmail,
+    addressForUser,
+    publicProfile,
+    startSession,
+    passwordProblem,
+    hashCustomerPassword
+} = require('../../auth/auth.public');
 const { priceCheckout } = require('../services/price-checkout.service');
 const { summaryLimiter, checkoutLimiter } = require('../infrastructure/checkout-rate-limit');
 
@@ -176,8 +184,6 @@ function checkoutController() {
             // answered, not obeyed.
             let profile = sessionScope(req) !== 'customer' ? null : await sessionProfile(req);
             let startedSession = false;
-            let createdProfile = false;
-            let adoptedExistingProfile = false;
 
             // This route reads the session itself rather than sitting behind
             // requireCustomer (it has to serve guests), so the suspension check
@@ -193,6 +199,7 @@ function checkoutController() {
                 const phone = trimmed(body.contact && body.contact.phone);
                 const company = trimmed(body.contact && body.contact.company);
                 const digits = normalizePhone(phone);
+                const password = body.contact && body.contact.password;
 
                 if (!name) return res.status(400).json({ field: 'name', error: "Enter your name." });
                 if (!email || !EMAIL_PATTERN.test(email)) {
@@ -201,6 +208,8 @@ function checkoutController() {
                 if (digits.length < 7) {
                     return res.status(400).json({ field: 'phone', error: "Enter a phone number we can reach you on." });
                 }
+                const passwordError = passwordProblem(password);
+                if (passwordError) return res.status(400).json({ field: 'password', error: passwordError });
 
                 // orders.user_id is NOT NULL, so there is no such thing as an
                 // order with nobody attached. A guest checkout therefore creates
@@ -215,20 +224,11 @@ function checkoutController() {
 
                 profile = byEmail.data || byPhone.data || null;
 
-                // ADOPTING AN EXISTING ACCOUNT IS A SESSION GRANT, SO IT IS
-                // LIMITED TO THE ROLE THAT ACCEPTS ONE WITHOUT A SECRET.
-                //
-                // Matching a typed email to an existing row and then calling
-                // startSession() below is, functionally, a sign-in through a
-                // form that asks for no code. For the customer role that grants
-                // nothing new — /api/auth/login already resolves an email to a
-                // session by design, and the comment above says so.
-                //
-                // For any other role it is a way to acquire that account's
-                // session by typing its email into a public contact form. So a
-                // non-customer profile is not adopted here at all. It is not
-                // created either — signup hard-codes the customer role, and
-                // this route must not be the one exception.
+                // CHECKOUT IS NOT A SECOND PASSWORD VERIFIER. If this contact
+                // block belongs to an existing profile, the customer must use
+                // POST /api/auth/login first. That keeps all password guessing
+                // behind authLimiter and prevents checkoutLimiter from becoming
+                // a second attempt budget against the same credential.
                 if (profile) {
                     const matchedRole = await roleNameById(profile.role_id);
                     if (matchedRole && matchedRole !== 'customer') {
@@ -244,38 +244,30 @@ function checkoutController() {
                     if (isBlocked(profile)) {
                         return res.status(403).json({ field: 'email', error: BLOCKED_MESSAGE });
                     }
+
+                    return res.status(409).json({
+                        field: byEmail.data ? 'email' : 'phone',
+                        error: "That account already exists. Sign in with its password before checking out."
+                    });
                 }
 
-                if (!profile) {
-                    const row = {
-                        full_name: name,
-                        email: email,
-                        phone_number: phone,
-                        phone_normalized: digits,
-                        company: company || null
-                    };
-                    const customerRole = await roleIdByName('customer');
-                    if (customerRole !== null) row.role_id = customerRole;
+                const row = {
+                    full_name: name,
+                    email: email,
+                    phone_number: phone,
+                    phone_normalized: digits,
+                    company: company || null,
+                    password_hash: await hashCustomerPassword(password)
+                };
+                const customerRole = await roleIdByName('customer');
+                if (customerRole !== null) row.role_id = customerRole;
 
-                    const created = await supabase.from('user_profiles').insert([row]).select().single();
-                    if (created.error) throw created.error;
-                    profile = created.data;
-                    createdProfile = true;
-                }
+                const created = await supabase.from('user_profiles').insert([row]).select().single();
+                if (created.error) throw created.error;
+                profile = created.data;
 
-                // Customer access is intentionally identifier-based. Once checkout
-                // has resolved a customer row by its registered email or phone, it
-                // starts the same scoped customer session as /api/auth/login. The
-                // adoption guard below still prevents typed checkout details from
-                // overwriting an existing customer's saved address.
                 await startSession(req, profile.id);
                 startedSession = true;
-
-                // Whether the row above was found or freshly created. A found
-                // one existed before this checkout, and section 3 below must not
-                // rewrite its saved address on the strength of contact fields
-                // entered for an order — see the note there.
-                adoptedExistingProfile = !createdProfile;
             }
 
             // ---- 3. Keep the saved address current.
@@ -284,34 +276,24 @@ function checkoutController() {
             // and is what a parcel follows; failing to update the customer's
             // convenience copy must not lose an order that is otherwise good.
             //
-            // SKIPPED FOR AN ADOPTED ACCOUNT. When a guest checkout matched an
-            // existing row by typed email or phone, this write would silently
-            // replace the saved home address with order-specific contact data.
-            // The saved address is a convenience copy; the order carries its own
-            // frozen one and that is what ships, so declining to touch it here
-            // costs the customer a re-type and costs an attacker the ability to
-            // rewrite somebody else's record from a public form.
-            //
-            // A signed-in customer and a brand-new account both still get it.
-            if (adoptedExistingProfile) {
-                console.warn('Guest checkout matched an existing account; saved address left untouched, for profile', profile.id);
-            } else {
-                try {
-                    const existing = await addressForUser(profile.id);
-                    const saved = {
-                        user_id: profile.id,
-                        full_address: addressLine, city: city, state: state,
-                        country: country, zip_code: postal
-                    };
-                    if (existing) {
-                        saved.updated_at = new Date().toISOString();
-                        await supabase.from('shipping_addresses').update(saved).eq('id', existing.id);
-                    } else {
-                        await supabase.from('shipping_addresses').insert([saved]);
-                    }
-                } catch (addressError) {
-                    console.error("Saved-address update failed (order continues):", addressError);
+            // Only a signed-in customer or a newly created password account can
+            // reach this write. An existing profile submitted by a guest was
+            // refused above, so public contact fields cannot rewrite its address.
+            try {
+                const existing = await addressForUser(profile.id);
+                const saved = {
+                    user_id: profile.id,
+                    full_address: addressLine, city: city, state: state,
+                    country: country, zip_code: postal
+                };
+                if (existing) {
+                    saved.updated_at = new Date().toISOString();
+                    await supabase.from('shipping_addresses').update(saved).eq('id', existing.id);
+                } else {
+                    await supabase.from('shipping_addresses').insert([saved]);
                 }
+            } catch (addressError) {
+                console.error("Saved-address update failed (order continues):", addressError);
             }
 
             // ---- 4. Write the complete order atomically.

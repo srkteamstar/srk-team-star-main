@@ -10,6 +10,7 @@
 // section 1.
 const BASE = 'http://localhost:3456';
 const control = require('./harness-control');
+const PASSWORD = 'correct-horse-42';
 
 let pass = 0, fail = 0;
 const failures = [];
@@ -58,25 +59,38 @@ async function req(cookies, method, path, body, extraHeaders) {
 (async () => {
     const anon = jar(), custA = jar(), custB = jar(), other = jar();
 
-    console.log('\n=== 1. CUSTOMER SIGN-IN IS IDENTIFIER-BASED ===');
+    console.log('\n=== 1. CUSTOMER SIGN-IN REQUIRES A PASSWORD ===');
 
     // THE DOOR OPENS FOR CUSTOMERS AND FOR NOBODY ELSE, and it says nothing
     // about what it refused. An earlier version answered a non-customer
     // account with a flag naming the role, which turned a route anybody may
     // call into a way to ask "is this address privileged?" of an address
     // somebody had already guessed.
-    let r = await req(other, 'POST', '/api/auth/login', { identifier: 'other-role@example.test' });
+    let r = await req(other, 'POST', '/api/auth/login', { identifier: 'other-role@example.test', password: PASSWORD });
     check('an account that is not a customer is refused here', r.status === 403, JSON.stringify(r));
     check('...and the refusal does not name the role it refused',
         !JSON.stringify(r.body).toLowerCase().includes('admin'), JSON.stringify(r.body));
     r = await req(other, 'GET', '/api/orders/mine');
     check('...and that refusal started no session', r.status === 401, JSON.stringify(r).slice(0, 80));
 
-    r = await req(custA, 'POST', '/api/auth/login', { identifier: 'a@example.test' });
-    check('customer signs in with an identifier',
+    r = await req(custA, 'POST', '/api/auth/login', { identifier: 'a@example.test', password: 'wrong-password' });
+    check('a wrong password is refused', r.status === 401 && r.body.field === 'password', JSON.stringify(r));
+    r = await req(custA, 'GET', '/api/orders/mine');
+    check('...and starts no session', r.status === 401, JSON.stringify(r).slice(0, 80));
+
+    r = await req(custA, 'POST', '/api/auth/login', { identifier: 'a@example.test', password: PASSWORD });
+    check('customer signs in with an identifier and password',
         r.status === 200 && r.body.customer.role === 'customer', JSON.stringify(r).slice(0, 120));
-    r = await req(custB, 'POST', '/api/auth/login', { identifier: 'b@example.test' });
+    check('the password hash is never returned', !JSON.stringify(r.body).includes('password_hash'), JSON.stringify(r.body));
+    r = await req(custB, 'POST', '/api/auth/login', { identifier: 'b@example.test', password: PASSWORD });
     check('second customer signs in', r.status === 200, JSON.stringify(r).slice(0, 80));
+
+    const legacy = jar();
+    r = await req(legacy, 'POST', '/api/auth/login', { identifier: 'c@example.test', password: PASSWORD });
+    check('a legacy profile with no hash is locked, not treated as passwordless',
+        r.status === 403 && r.body.field === 'password', JSON.stringify(r));
+    r = await req(legacy, 'GET', '/api/orders/mine');
+    check('...and that locked profile received no session', r.status === 401, JSON.stringify(r).slice(0, 80));
 
     console.log('\n=== 2. IDOR — one customer cannot read another\'s orders ===');
     const aOrders = await req(custA, 'GET', '/api/orders/mine');
@@ -103,8 +117,13 @@ async function req(cookies, method, path, body, extraHeaders) {
     check('still a customer after the attempt',
         r.body.customer && r.body.customer.role === 'customer', JSON.stringify(r.body.customer));
 
+    r = await req(jar(), 'POST', '/api/auth/register',
+        { name: 'No Secret', email: 'no-secret@example.test', phone: '9000000098' });
+    check('register refuses to create a passwordless account',
+        r.status === 400 && r.body.field === 'password', JSON.stringify(r));
+
     r = await req(anon, 'POST', '/api/auth/register',
-        { name: 'Escalate', email: 'esc@example.test', phone: '9000000099', role_id: 1 });
+        { name: 'Escalate', email: 'esc@example.test', phone: '9000000099', password: PASSWORD, role_id: 1 });
     check('register cannot self-assign another role',
         r.status === 201 && r.body.customer.role === 'customer', JSON.stringify(r.body).slice(0, 140));
 
@@ -112,25 +131,25 @@ async function req(cookies, method, path, body, extraHeaders) {
     const guest = jar();
     r = await req(guest, 'POST', '/api/checkout', {
         items: [{ product_id: 1, quantity: 1 }],
-        contact: { name: 'Attacker', email: 'other-role@example.test', phone: '9111111111' },
+        contact: { name: 'Attacker', email: 'other-role@example.test', phone: '9111111111', password: PASSWORD },
         address: { address_line: 'x', city: 'y', state: 'z', postal_code: '111111' }
     });
     check('checkout naming a non-customer email is refused', r.status === 409, r.status + ' ' + JSON.stringify(r.body).slice(0, 90));
     r = await req(guest, 'GET', '/api/auth/me');
     check('...and no session was created at all', r.status === 200 && r.body.customer === null, JSON.stringify(r).slice(0, 90));
 
-    console.log('\n=== 5. GUEST CHECKOUT DOES NOT REWRITE A STRANGER\'S SAVED ADDRESS ===');
+    console.log('\n=== 5. CHECKOUT IS NOT A SECOND SIGN-IN DOOR ===');
     const guest2 = jar();
     r = await req(guest2, 'POST', '/api/checkout', {
         items: [{ product_id: 1, quantity: 1 }],
-        contact: { name: 'Someone Else', email: 'a@example.test', phone: '9222222222' },
+        contact: { name: 'Someone Else', email: 'a@example.test', phone: '9222222222', password: PASSWORD },
         address: { address_line: 'ATTACKER ADDRESS', city: 'Nowhere', state: 'NA', postal_code: '999999' }
     });
-    check('matched customer receives an identifier-based session', r.status === 201 && r.body.signed_in === true,
+    check('an existing customer is told to sign in first', r.status === 409 && r.body.field === 'email',
         r.status + ' ' + JSON.stringify(r.body).slice(0, 120));
     const guest2Profile = await req(guest2, 'GET', '/api/auth/me');
-    check('...and that session opens the matched customer account',
-        guest2Profile.status === 200 && guest2Profile.body.customer.id === 200,
+    check('...and checkout did not mint a session',
+        guest2Profile.status === 200 && guest2Profile.body.customer === null,
         guest2Profile.status + ' ' + JSON.stringify(guest2Profile.body).slice(0, 120));
     const aProfile = await req(custA, 'GET', '/api/auth/me');
     check('customer A\'s saved address is untouched',
@@ -142,7 +161,7 @@ async function req(cookies, method, path, body, extraHeaders) {
     control.failNextAtomicCheckout();
     r = await req(jar(), 'POST', '/api/checkout', {
         items: [{ product_id: 1, quantity: 2 }],
-        contact: { name: 'Atomic Test', email: 'atomic@example.test', phone: '9333333333' },
+        contact: { name: 'Atomic Test', email: 'atomic@example.test', phone: '9333333333', password: PASSWORD },
         address: { address_line: '3 Test Street', city: 'Rajkot', state: 'Gujarat', postal_code: '360001' },
         payment_mode: 'offline', payment_method: 'Cash on Delivery'
     });
@@ -182,7 +201,7 @@ async function req(cookies, method, path, body, extraHeaders) {
     check('a quote accepts an explicit line quantity', r.status === 200, JSON.stringify(r).slice(0, 100));
 
     console.log('\n=== 9. UNKNOWN IDENTIFIER IS FLAGGED, NOT JUST 404ed ===');
-    r = await req(jar(), 'POST', '/api/auth/login', { identifier: 'nobody@example.test' });
+    r = await req(jar(), 'POST', '/api/auth/login', { identifier: 'nobody@example.test', password: PASSWORD });
     check('login for an unknown account answers 404 with account_not_found',
         r.status === 404 && r.body.account_not_found === true, JSON.stringify(r).slice(0, 120));
     check('...and does not start a session',
@@ -190,7 +209,7 @@ async function req(cookies, method, path, body, extraHeaders) {
 
     console.log('\n=== 10. SIGN-OUT ACTUALLY ENDS THE SESSION ===');
     const bye = jar();
-    r = await req(bye, 'POST', '/api/auth/login', { identifier: 'a@example.test' });
+    r = await req(bye, 'POST', '/api/auth/login', { identifier: 'a@example.test', password: PASSWORD });
     check('signed in before signing out', r.status === 200, JSON.stringify(r).slice(0, 60));
     r = await req(bye, 'POST', '/api/auth/logout', {});
     check('logout returns 200', r.status === 200, JSON.stringify(r).slice(0, 60));
@@ -204,7 +223,7 @@ async function req(cookies, method, path, body, extraHeaders) {
     const fix = jar();
     await req(fix, 'GET', '/api/auth/me');
     const before = fix.header();
-    await req(fix, 'POST', '/api/auth/login', { identifier: 'a@example.test' });
+    await req(fix, 'POST', '/api/auth/login', { identifier: 'a@example.test', password: PASSWORD });
     check('session id is regenerated on sign-in', fix.header() !== before || before === '',
         'before=' + before.slice(0, 30) + ' after=' + fix.header().slice(0, 30));
 
@@ -228,11 +247,7 @@ async function req(cookies, method, path, body, extraHeaders) {
     // A guest cart never reaches the server at all, so both doors are shut
     // rather than answering with an empty one.
     //
-    // NOT the `anon` jar, which is not anonymous by this point in the suite:
-    // it walked a guest checkout in section 9, and POST /api/checkout creates
-    // the account an order needs and signs it in. A fresh jar is the only way
-    // to ask this question, and using `anon` answered 200 with an empty cart —
-    // a pass that would have proved the opposite of what it claimed.
+    // Use a fresh jar so this assertion cannot inherit any earlier session.
     const noSession = jar();
     r = await req(noSession, 'GET', '/api/cart');
     check('a guest cannot read a cart', r.status === 401, JSON.stringify(r).slice(0, 80));
@@ -278,7 +293,7 @@ async function req(cookies, method, path, body, extraHeaders) {
     r = await req(custA, 'GET', '/api/cart');
     check('signed out, the cart is unreachable', r.status === 401, JSON.stringify(r).slice(0, 80));
 
-    r = await req(custA, 'POST', '/api/auth/login', { identifier: 'a@example.test' });
+    r = await req(custA, 'POST', '/api/auth/login', { identifier: 'a@example.test', password: PASSWORD });
     check('A signs back in', r.status === 200, JSON.stringify(r).slice(0, 80));
     r = await req(custA, 'GET', '/api/cart');
     check('...and the basket is exactly where they left it',

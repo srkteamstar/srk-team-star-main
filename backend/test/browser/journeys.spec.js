@@ -118,7 +118,34 @@ test('the bag icon adds quietly and stays on the page', async ({ page }) => {
 });
 
 // ---------------------------------------------------------------------------
-// 4. A GUEST CAN PLACE A CASH ON DELIVERY ORDER
+// 4. MORE PRODUCTS OPENS THE PRODUCT IT NAMES
+// ---------------------------------------------------------------------------
+// This rail used to be five typed sample cards with no product ids. It looked
+// like the live catalogue but could not open anything. The rail now reuses the
+// catalogue rows, and this proves the id survives all the way through the
+// delegated card click into a repaint of the existing details overlay.
+test('a More Products card opens that product in the details overlay', async ({ page }) => {
+    await page.goto('/store/store.html#all-products', { waitUntil: 'domcontentloaded' });
+
+    const firstCard = page.locator('article[data-product-id]').first();
+    await expect(firstCard).toBeVisible({ timeout: 15000 });
+    await firstCard.click();
+
+    const overlay = page.locator('#product-details');
+    await expect(overlay).toBeVisible({ timeout: 15000 });
+    await expect(overlay.locator('#product-details-title')).toHaveText('Fake Machine');
+
+    const suggestion = overlay.locator('#product-details-rail article[data-product-id]').first();
+    await expect(suggestion).toBeVisible({ timeout: 15000 });
+    await expect(suggestion.locator('h3')).toHaveText('Fake On Request');
+    await suggestion.click();
+
+    await expect(overlay.locator('#product-details-title')).toHaveText('Fake On Request');
+    await expect(page.locator('#product-details')).toHaveCount(1);
+});
+
+// ---------------------------------------------------------------------------
+// 5. A GUEST CAN PLACE A CASH ON DELIVERY ORDER
 // ---------------------------------------------------------------------------
 // The whole commercial path in one test: cart -> priced summary -> contact and
 // address -> an offline instrument -> a placed order with a reference. It
@@ -138,6 +165,7 @@ test('a guest can check out with Cash on Delivery and gets a reference', async (
     await fill('#checkout-name', 'Journey Buyer');
     await fill('#checkout-phone', '9000000077');
     await fill('#checkout-email', 'journey@example.test');
+    await fill('#checkout-password', 'correct-horse-42');
     await fill('#checkout-address', '7 Journey Road');
     await fill('#checkout-city', 'Gohana');
     await fill('#checkout-state', 'Haryana');
@@ -210,6 +238,7 @@ test('an untouched checkout field is not stored as an empty draft value', async 
         field.value = 'Only The Name';
         field.dispatchEvent(new Event('input', { bubbles: true }));
     });
+    await page.locator('#checkout-password').fill('must-not-be-stored');
 
     const draft = await page.evaluate(() => JSON.parse(sessionStorage.getItem('srk_checkout_draft') || '{}'));
 
@@ -217,6 +246,8 @@ test('an untouched checkout field is not stored as an empty draft value', async 
     expect(Object.prototype.hasOwnProperty.call(draft, 'phone'),
         'an untouched field must not be stored as an empty string').toBe(false);
     expect(Object.prototype.hasOwnProperty.call(draft, 'city')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(draft, 'password'),
+        'a checkout draft must never persist a password').toBe(false);
 });
 
 // ---------------------------------------------------------------------------
@@ -499,7 +530,29 @@ test('the mobile navigation panel holds a Lenis page still', async ({ page }) =>
     expect((await bodyState(page)).position).toBe('fixed');
     await expect.poll(() => panel.evaluate(el => getComputedStyle(el).overscrollBehaviorY)).toBe('contain');
 
-    await page.locator('.srk-mobile-panel__close').click();
+    const publicVisualState = await panel.evaluate(node => {
+        const home = Array.from(node.querySelectorAll('.srk-mobile-panel__group a'))
+            .find(link => link.textContent.trim() === 'Home');
+        const foot = node.querySelector('.srk-mobile-panel__foot');
+        const logo = node.querySelector('.srk-mobile-panel__head img');
+        return {
+            width: parseFloat(getComputedStyle(node).width),
+            background: getComputedStyle(node).backgroundColor,
+            logoHeight: parseFloat(getComputedStyle(logo).height),
+            homeBackground: getComputedStyle(home).backgroundColor,
+            footBorder: getComputedStyle(foot).borderTopWidth,
+            footLabels: Array.from(foot.querySelectorAll('a')).map(link => link.textContent.trim())
+        };
+    });
+
+    expect(publicVisualState.width).toBe(300);
+    expect(publicVisualState.background).toBe('rgb(255, 255, 255)');
+    expect(publicVisualState.logoHeight).toBe(60);
+    expect(publicVisualState.homeBackground).toBe('rgba(212, 175, 55, 0.1)');
+    expect(publicVisualState.footBorder).toBe('1px');
+    expect(publicVisualState.footLabels).toEqual(['Request a Quote', 'Need Assistance?']);
+
+    await page.keyboard.press('Escape');
     await expect.poll(() => page.evaluate(() => window.srkScrollLock.depth())).toBe(0);
 
     // Lenis animates towards a target it holds itself, so this is polled: the
@@ -509,41 +562,44 @@ test('the mobile navigation panel holds a Lenis page still', async ({ page }) =>
     expect((await bodyState(page)).position).toBe('static');
 });
 
-test('the mobile store drawer presents and dismisses the navigation system', async ({ page }) => {
+test('the mobile store drawer retains its original navigation system', async ({ page }) => {
     await page.setViewportSize(PHONE);
     await page.goto('/store/store.html', { waitUntil: 'domcontentloaded' });
 
     const trigger = page.locator('.srk-shell-menu-button');
     await expect(trigger).toBeVisible();
     await expect(trigger).toHaveAttribute('aria-expanded', 'false');
-    await expect(trigger.locator('svg')).toHaveCSS('stroke', 'rgb(255, 255, 255)');
     await trigger.click();
 
     const drawer = page.locator('.srk-store-sidebar');
-    const dismiss = drawer.locator('.srk-store-drawer-close');
     await expect(drawer).toHaveAttribute('data-open', 'true');
-    await expect(dismiss).toBeVisible();
-    await expect(dismiss).toBeFocused();
+    await expect(drawer.locator('.srk-store-drawer-head')).toHaveCount(0);
     await expect(trigger).toHaveAttribute('aria-expanded', 'true');
 
     const visualState = await drawer.evaluate(node => {
         const active = node.querySelector('#policy-nav .nav-btn[class~="text-[#d4af37]"]');
         const support = node.querySelector('#policy-nav-secondary');
+        const logo = node.querySelector('img[alt="SRK Team Star Home"]');
         return {
             width: parseFloat(getComputedStyle(node).width),
-            activeBackground: getComputedStyle(active).backgroundImage,
+            background: getComputedStyle(node).backgroundColor,
+            logoHeight: parseFloat(getComputedStyle(logo).height),
+            activeBackground: getComputedStyle(active).backgroundColor,
             supportBackground: getComputedStyle(support).backgroundColor,
+            supportBorder: getComputedStyle(support).borderTopWidth,
             overscroll: getComputedStyle(node).overscrollBehaviorY
         };
     });
 
-    expect(visualState.width).toBeGreaterThan(320);
-    expect(visualState.width).toBeLessThanOrEqual(356);
-    expect(visualState.activeBackground).toContain('linear-gradient');
-    expect(visualState.supportBackground).toBe('rgb(18, 23, 15)');
+    expect(visualState.width).toBe(300);
+    expect(visualState.background).toBe('rgb(255, 255, 255)');
+    expect(visualState.logoHeight).toBe(60);
+    expect(visualState.activeBackground).toBe('rgba(212, 175, 55, 0.1)');
+    expect(visualState.supportBackground).toBe('rgba(0, 0, 0, 0)');
+    expect(visualState.supportBorder).toBe('1px');
     expect(visualState.overscroll).toBe('contain');
 
-    await dismiss.click();
+    await page.keyboard.press('Escape');
     await expect(drawer).not.toHaveAttribute('data-open', 'true');
     await expect(trigger).toHaveAttribute('aria-expanded', 'false');
     await expect(trigger).toBeFocused();

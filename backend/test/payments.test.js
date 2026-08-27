@@ -76,7 +76,8 @@ const checkoutSignature = (gatewayOrderId, paymentId) =>
 const CART = [{ product_id: 1, quantity: 1 }];
 
 const CONTACT = (n) => ({
-    name: 'Pay Tester', email: `payer${n}@example.test`, phone: `90000100${n}`, company: null
+    name: 'Pay Tester', email: `payer${n}@example.test`, phone: `90000100${n}`,
+    company: null, password: 'correct-horse-42'
 });
 
 const ADDRESS = {

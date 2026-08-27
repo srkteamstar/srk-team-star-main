@@ -420,6 +420,7 @@
             const values = readForm();
             const typed = {};
             Object.entries(Object.assign({}, values.contact, values.address)).forEach(([key, value]) => {
+                if (key === 'password') return;
                 if (typeof value === 'string' && value.trim() !== '') typed[key] = value;
             });
             draft = Object.assign(typed, { paymentMode, paymentMethod });
@@ -743,7 +744,7 @@
         };
 
         return [
-            '<form autocomplete="srk-no-autofill" id="checkout-form" novalidate>',
+            '<form autocomplete="on" data-srk-password-manager="allow" id="checkout-form" novalidate>',
             '    ' + signedInNoticeHTML(),
 
             '    <section class="mb-10">',
@@ -754,12 +755,15 @@
             // Read-only rather than absent when signed in: the customer should
             // see which address the confirmation is going to, and changing the
             // email on an account is a verified flow this page does not own.
-            '            ' + textFieldHTML({ id: 'checkout-email', label: 'Email Address', type: 'email', placeholder: 'you@business.com', required: true, value: customer ? c.email : value('email', c.email), readonly: !!customer }),
+            '            ' + textFieldHTML({ id: 'checkout-email', label: 'Email Address', type: 'email', placeholder: 'you@business.com', required: true, value: customer ? c.email : value('email', c.email), readonly: !!customer, autocomplete: customer ? undefined : 'username' }),
             '            ' + textFieldHTML({ id: 'checkout-company', label: 'Business Name', placeholder: 'Optional', value: value('company', c.company) }),
+            customer
+                ? ''
+                : '            ' + textFieldHTML({ id: 'checkout-password', label: 'Create Account Password', type: 'password', placeholder: 'At least 8 characters', required: true, maxlength: 128, autocomplete: 'new-password' }),
             '        </div>',
             customer
                 ? '        <p class="text-[11px] text-[#1f271b]/45 mt-3">Contact us to change the email on your account.</p>'
-                : '',
+                : '        <p class="text-[11px] text-[#1f271b]/45 mt-3">New customer? This password protects the account created with your order. Already have an account? Sign in above first.</p>',
             '    </section>',
 
             '    <section class="mb-10">',
@@ -1193,6 +1197,7 @@
         { id: 'checkout-name', message: 'Enter your name.' },
         { id: 'checkout-email', message: 'Enter your email address.' },
         { id: 'checkout-phone', message: 'Enter a phone number we can reach you on.' },
+        { id: 'checkout-password', message: 'Create a password.' },
         { id: 'checkout-address', message: 'Enter a street address.' },
         { id: 'checkout-city', message: 'Enter a city.' },
         { id: 'checkout-state', message: 'Enter a state.' },
@@ -1210,7 +1215,11 @@
                 name: value('checkout-name'),
                 email: value('checkout-email'),
                 phone: value('checkout-phone'),
-                company: value('checkout-company')
+                company: value('checkout-company'),
+                password: (() => {
+                    const field = document.getElementById('checkout-password');
+                    return field ? field.value : '';
+                })()
             },
             address: {
                 address_line: value('checkout-address'),
@@ -1279,6 +1288,17 @@
         if (firstBad) {
             firstBad.focus({ preventScroll: true });
             firstBad.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            showBanner('Check the highlighted fields and try again.');
+            return;
+        }
+
+        const passwordField = document.getElementById('checkout-password');
+        if (passwordField && (passwordField.value.length < 8 || passwordField.value.length > 128)) {
+            fieldError(passwordField, passwordField.value.length < 8
+                ? 'Use at least 8 characters.'
+                : 'Use no more than 128 characters.');
+            passwordField.focus({ preventScroll: true });
+            passwordField.scrollIntoView({ block: 'center', behavior: 'smooth' });
             showBanner('Check the highlighted fields and try again.');
             return;
         }
@@ -1357,7 +1377,9 @@
             // has been repainted away, and readForm() would hand back empty
             // strings — so the modal would lose its prefill precisely on the
             // retry where the customer least wants to retype.
-            rememberPending(Object.assign({}, payload, { contact: body.contact }));
+            const paymentContact = Object.assign({}, body.contact);
+            delete paymentContact.password;
+            rememberPending(Object.assign({}, payload, { contact: paymentContact }));
             clearDraft();
             return startPayment();
         }

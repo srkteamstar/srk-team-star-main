@@ -369,8 +369,8 @@ registration order.
 
 ```
 npm run verify           three structural checks, ~1s, no network, no database
-npm test                 103 API assertions against the real server.js
-npm run test:browser     53 Playwright journeys
+npm test                 109 API assertions against the real server.js
+npm run test:browser     55 Playwright journeys
 npm run test:all         all of it
 ```
 

@@ -16,11 +16,19 @@
 
 const path = require('path');
 const Module = require('module');
+const crypto = require('crypto');
 const control = require('./harness-control');
 
 // ---- The stub dataset -------------------------------------------------------
-// Customers sign in with an identifier and no secret, so the fixtures need
-// none. The one row whose role is NOT 'customer' is here for a single purpose:
+// Customer credentials use the same scrypt$salt$hash format as the real auth
+// service. A fixed salt is appropriate only for deterministic fake rows; the
+// application itself generates a fresh random salt for every password.
+const FIXTURE_PASSWORD = 'correct-horse-42';
+const fixtureSalt = Buffer.from('0123456789abcdef');
+const fixturePasswordHash = (password) =>
+    `scrypt$${fixtureSalt.toString('hex')}$${crypto.scryptSync(password, fixtureSalt, 64).toString('hex')}`;
+
+// The one row whose role is NOT 'customer' is here for a single purpose:
 // the storefront door has to refuse it, and a suite with no such row could
 // only ever prove that customers get in.
 
@@ -34,14 +42,15 @@ const db = {
         // storefront can be seen refusing it — at the login door, and again
         // when a guest checkout types its email into a contact form.
         { id: 100, full_name: 'Fake Other Role', email: 'other-role@example.test', phone_number: '9000000001',
-          phone_normalized: '9000000001', company: null, role_id: 1, created_at: '2026-01-01T00:00:00Z' },
+          phone_normalized: '9000000001', company: null, role_id: 1, password_hash: fixturePasswordHash(FIXTURE_PASSWORD), created_at: '2026-01-01T00:00:00Z' },
         { id: 200, full_name: 'Fake Customer A', email: 'a@example.test', phone_number: '9000000002',
-          phone_normalized: '9000000002', company: 'A Ltd', role_id: 2, created_at: '2026-01-02T00:00:00Z' },
+          phone_normalized: '9000000002', company: 'A Ltd', role_id: 2, password_hash: fixturePasswordHash(FIXTURE_PASSWORD), created_at: '2026-01-02T00:00:00Z' },
         { id: 201, full_name: 'Fake Customer B', email: 'b@example.test', phone_number: '9000000003',
-          phone_normalized: '9000000003', company: 'B Ltd', role_id: 2, created_at: '2026-01-03T00:00:00Z' },
+          phone_normalized: '9000000003', company: 'B Ltd', role_id: 2, password_hash: fixturePasswordHash(FIXTURE_PASSWORD), created_at: '2026-01-03T00:00:00Z' },
         // No orders and no address, so a route that has to distinguish "an
         // account with nothing filed against it" from one with history has a
-        // row of each to work with.
+        // row of each to work with. It also represents a profile created during
+        // identifier-only access: no hash means locked, never passwordless.
         { id: 202, full_name: 'Fake Customer C', email: 'c@example.test', phone_number: '9000000005',
           phone_normalized: '9000000005', company: null, role_id: 2, created_at: '2026-01-04T00:00:00Z' }
     ],

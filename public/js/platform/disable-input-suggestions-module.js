@@ -86,6 +86,10 @@
      */
     function harden(el) {
         if (!el || el.nodeType !== 1) return;
+        // Credential fields opt in explicitly. Password managers are a security
+        // feature once the site has real passwords; do not stamp vendor-specific
+        // ignore flags over username/current-password/new-password fields.
+        if (el.getAttribute('data-srk-password-manager') === 'allow') return;
         if (el.__srkHardened && el.getAttribute('autocomplete') === AUTOCOMPLETE_OFF) return;
 
         el.__srkHardened = true;

@@ -25,7 +25,7 @@ const { supabase } = require('../database/supabase');
 //
 // ONE DOOR, ONE KIND OF SESSION, AND TWO CHECKS ON IT.
 //
-//   POST /api/auth/login    the storefront. A customer identifier, nothing else.
+//   POST /api/auth/login    the storefront. A customer identifier and password.
 //
 // A session records which door it came through, in `req.session.scope`.
 // With one door that field looks redundant, and it is not: the role in the

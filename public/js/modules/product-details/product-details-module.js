@@ -26,14 +26,13 @@
  * shape openDrawer already gives the cart — so the product region scrolls
  * genuinely independently of the rail below it.
  *
- * DATA — HALF REAL, HALF SAMPLE, AND THE SEAM IS VISIBLE
- * -----------------------------------------------------
- * The product is real: window.productSection.loadProducts(), the same cached
- * promise the four sections, the search overlay, the cart and the quote form
- * read. So opening details after browsing costs no request, no new API route
- * is needed, and what is shown here can never drift from the card that was
- * clicked. The bottom rail is sample data behind a DATA SOURCE block — the
- * same seam cart-module.js and my-orders-module.js use.
+ * DATA — ONE CATALOGUE, TWO VIEWS
+ * -------------------------------
+ * The product and the "More Products" rail both come from
+ * window.productSection.loadProducts(), the same cached promise the four
+ * sections, the search overlay, the cart and the quote form read. Opening
+ * details after browsing therefore costs no request, and every card in the
+ * rail carries a real product id that can open the same details surface.
  *
  * LOAD ORDER
  * ----------
@@ -69,42 +68,38 @@
     } = chrome;
 
     // ------------------------------------------------------------------
-    // DATA SOURCE — sample rail, replace when the routes below exist
+    // DATA SOURCE
     // ------------------------------------------------------------------
-    // The product on this page is real. The rail is not, and cannot be yet:
-    // there is no table that says "these two go together" and no route that
-    // answers "what else is like this". So it follows the seam cart-module.js
-    // and my-orders-module.js use — one accessor whose body is a lookup today
-    // and a fetch later, with nothing above it changing when that happens.
+    // "More Products" needs no second source: it is the active catalogue with
+    // the product already open removed. Products from the same category are
+    // placed first, while the API's existing alphabetical order is preserved
+    // inside both groups.
     //
-    // TODO: replace loadRail() with
+    // Combinations stays disabled until a real relationship exists. On that
+    // day loadRail() can add:
     //   GET /api/products/:id/combinations -> [{ id, name, category_name, price, image_url }]
-    //   GET /api/products/:id/related      -> the same shape
-    // Both want the envelope /api/products/public already returns, so the tile
-    // below needs no change on the day they land — only `id` starts arriving,
-    // and that is what turns an inert tile into a real card (see railCardHTML).
-    //
-    // Image paths are folders that exist on disk. Rapid Frame holds only an
-    // INFO.txt, and Cutting Machine / Pinning Machine hold only per-spare-part
-    // subfolders, so those are reached through a subfolder or not used.
-    const SAMPLE_RAIL = {
-        combinations: [
-            { id: null, name: 'Frame Master + V-Nail Starter Set', category_name: 'Bundle', price: '78500', image_url: '/assets/products/Frame Master/AVIF/01.avif' },
-            { id: null, name: 'Trim Craft + Blade Service Kit', category_name: 'Bundle', price: '41200', image_url: '/assets/products/Trim Craft/AVIF/01.avif' },
-            { id: null, name: 'KonaFit Workshop Pack', category_name: 'Bundle', price: 'On request', image_url: '/assets/products/KonaFit/AVIF/01.avif' },
-            { id: null, name: 'Pinner + Hook Press Line', category_name: 'Bundle', price: '1,18,000', image_url: '/assets/products/Swift Frame Pinner/AVIF/01.avif' }
-        ],
-        more: [
-            { id: null, name: 'Swift Frame Pinner', category_name: 'Machinery', price: '66000', image_url: '/assets/products/Swift Frame Pinner/AVIF/01.avif' },
-            { id: null, name: 'MDF Hook Press Machine', category_name: 'Machinery', price: '52000', image_url: '/assets/products/MDF Hook Press Machine/AVIF/01.avif' },
-            { id: null, name: 'Trim Craft', category_name: 'Machinery', price: '38500', image_url: '/assets/products/Trim Craft/AVIF/01.avif' },
-            { id: null, name: 'Rubber Support', category_name: 'Machine Spare Parts', price: 'On request', image_url: '/assets/products/Cutting Machine/Rubber Support/AVIF/01.avif' },
-            { id: null, name: 'Adjustable Bolt', category_name: 'Machine Spare Parts', price: '450', image_url: '/assets/products/Pinning Machine/Adjustable Bolt/AVIF/01.avif' }
-        ]
-    };
 
     async function loadRail(productId, which) {
-        return SAMPLE_RAIL[which] || [];
+        if (which !== 'more') return [];
+
+        const products = await section.loadProducts();
+        const current = products.find(item => String(item.id) === String(productId)) || null;
+        const currentCategory = current && current.category_id !== null && current.category_id !== undefined
+            ? String(current.category_id)
+            : null;
+
+        return products
+            .filter(item => item && item.id !== null && item.id !== undefined && String(item.id) !== String(productId))
+            .map((item, index) => ({ item, index }))
+            .sort((a, b) => {
+                if (!currentCategory) return a.index - b.index;
+
+                const aMatches = String(a.item.category_id) === currentCategory;
+                const bMatches = String(b.item.category_id) === currentCategory;
+                if (aMatches !== bMatches) return aMatches ? -1 : 1;
+                return a.index - b.index;
+            })
+            .map(entry => entry.item);
     }
 
     // ------------------------------------------------------------------
@@ -601,20 +596,18 @@
         ].join('\n');
     }
 
-    // Rendered as an inert <div> while `item.id` is null, which is what every
-    // sample tile is today. That is deliberate, not laziness: an
-    // <article data-product-id> here would be matched by cart-module.js's
-    // delegated listener *and* by this file's own, and both would go looking
-    // in the catalogue for a product that does not exist. store.html's four
-    // hardcoded home-view demo cards are inert for exactly this reason. When
-    // loadRail() returns real rows with ids, the tag flips and both listeners
-    // light up with no further wiring.
+    // A real catalogue row becomes the same article[data-product-id] contract
+    // used by every other product surface, so the document-level details
+    // listener can repaint this overlay when the card is clicked. Keeping the
+    // inert fallback makes this renderer safe for a future combinations route
+    // that returns an incomplete row.
     function railCardHTML(item) {
-        const tag = item.id ? 'article' : 'div';
-        const attr = item.id ? ' data-product-id="' + escapeHtml(item.id) + '"' : '';
+        const hasId = item.id !== null && item.id !== undefined && String(item.id) !== '';
+        const tag = hasId ? 'article' : 'div';
+        const attr = hasId ? ' data-product-id="' + escapeHtml(item.id) + '"' : '';
 
         return [
-            '<' + tag + attr + ' class="snap-start shrink-0 w-[248px] md:w-[280px] flex items-center gap-3 bg-white border border-[#12170f]/10 rounded-sm p-2 md:p-2.5 hover:border-[#d4af37]/40 hover:shadow-sm transition-all' + (item.id ? '' : ' select-none') + '">',
+            '<' + tag + attr + ' class="snap-start shrink-0 w-[248px] md:w-[280px] flex items-center gap-3 bg-white border border-[#12170f]/10 rounded-sm p-2 md:p-2.5 hover:border-[#d4af37]/40 hover:shadow-sm transition-all' + (hasId ? '' : ' select-none') + '">',
             '    <div class="relative w-14 h-14 md:w-16 md:h-16 shrink-0 bg-[#f1f5f9] rounded-sm flex items-center justify-center p-1.5 overflow-hidden">',
             '        ' + railMediaHTML(item),
             '    </div>',
@@ -719,8 +712,21 @@
         const rail = handle.footerEl.querySelector('#product-details-rail');
         if (!rail) return;
 
-        const items = await loadRail(product ? product.id : null, railTab);
-        if (!handle) return;
+        const requestedProductId = product ? product.id : null;
+        const requestedTab = railTab;
+        let items;
+
+        try {
+            items = await loadRail(requestedProductId, requestedTab);
+        } catch (error) {
+            // paint() owns the catalogue error state. The rail is secondary,
+            // so it quietly becomes empty instead of raising an unhandled
+            // rejection alongside the useful Retry control in the body.
+            items = [];
+        }
+
+        const activeProductId = product ? product.id : null;
+        if (!handle || requestedTab !== railTab || String(requestedProductId) !== String(activeProductId)) return;
 
         rail.innerHTML = items.length
             ? items.map(railCardHTML).join('\n')

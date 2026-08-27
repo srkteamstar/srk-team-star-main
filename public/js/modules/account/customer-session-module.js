@@ -10,8 +10,8 @@
  * `shipping_addresses` tables. Nothing above this file changed shape when that
  * happened, which was the point of the seam.
  *
- * Customer sign-in is identifier-based. The httpOnly session means this
- * module keeps no reusable token.
+ * Customer sign-in requires an identifier and password. The httpOnly session
+ * means this module keeps neither a reusable token nor the password.
  *
  * WHAT IS ON THE SERVER NOW
  * -------------------------
@@ -167,6 +167,8 @@
     // WRITERS
     // ------------------------------------------------------------------
     const MIN_PHONE_DIGITS = 7;
+    const MIN_PASSWORD_LENGTH = 8;
+    const MAX_PASSWORD_LENGTH = 128;
 
     const digitsOf = (value) => String(value || '').replace(/[^0-9]/g, '');
 
@@ -186,13 +188,23 @@
             : 'Enter a valid phone number, or use your email instead.';
     }
 
+    function passwordProblem(password) {
+        if (typeof password !== 'string' || !password) return 'Enter a password.';
+        if (password.length < MIN_PASSWORD_LENGTH) return 'Use at least 8 characters.';
+        if (password.length > MAX_PASSWORD_LENGTH) return 'Use no more than 128 characters.';
+        return null;
+    }
+
     async function signIn(details) {
         const identifier = String(details && details.identifier || '').trim();
+        const password = typeof (details && details.password) === 'string' ? details.password : '';
 
         const problem = identifierProblem(identifier);
         if (problem) return { ok: false, field: 'identifier', error: problem };
+        const credentialProblem = passwordProblem(password);
+        if (credentialProblem) return { ok: false, field: 'password', error: credentialProblem };
 
-        const result = await postJSON('/api/auth/login', { identifier });
+        const result = await postJSON('/api/auth/login', { identifier, password });
         if (!result.ok) return result;
 
         setCustomer(result.data.customer);
@@ -207,6 +219,7 @@
         const email = String(details && details.email || '').trim().toLowerCase();
         const phone = String(details && details.phone || '').trim();
         const company = String(details && details.company || '').trim();
+        const password = typeof (details && details.password) === 'string' ? details.password : '';
 
         if (!name) return { ok: false, field: 'name', error: 'Enter your name.' };
         if (!email) return { ok: false, field: 'email', error: 'Enter an email address.' };
@@ -215,7 +228,9 @@
         if (digitsOf(phone).length < MIN_PHONE_DIGITS) {
             return { ok: false, field: 'phone', error: 'Enter a phone number we can reach you on.' };
         }
-        const result = await postJSON('/api/auth/register', { name, email, phone, company });
+        const credentialProblem = passwordProblem(password);
+        if (credentialProblem) return { ok: false, field: 'password', error: credentialProblem };
+        const result = await postJSON('/api/auth/register', { name, email, phone, company, password });
         if (!result.ok) return result;
 
         setCustomer(result.data.customer);

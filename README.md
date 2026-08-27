@@ -88,14 +88,15 @@ Express project's static files before running an optional build command.
 
 ## Database
 
-Supabase. `backend/migrations/` holds 27 numbered SQL files, run in order.
+Supabase. `backend/migrations/` holds 28 numbered SQL files, run in order.
 
 Not all of them have been run, and the ones outstanding are outstanding for
 reasons rather than by neglect — **020** (a type change on live money columns)
 and **023** (destructive, and superseded by 024) are both deliberate. **025**
 must be run before checkout works at all; **027** must be run or every enquiry
-without a phone number is lost. The migration headers say which is which; read
-the one you are about to run.
+without a phone number is lost; **028** must be run before the password-auth
+code is deployed. The migration headers say which is which; read the one you
+are about to run.
 
 ---
 
@@ -103,8 +104,8 @@ the one you are about to run.
 
 ```bash
 npm run verify        # 3 structural checks, ~1s, no network, no database
-npm test              # 103 API assertions against the real server.js
-npm run test:browser  # 53 Playwright journeys (needs: npx playwright install chromium)
+npm test              # 109 API assertions against the real server.js
+npm run test:browser  # 55 Playwright journeys (needs: npx playwright install chromium)
 npm run test:all      # all of it
 ```
 
@@ -174,13 +175,13 @@ docs/                    file-inventory.md
 
 ## Two things to know before changing anything
 
-**Sign-in for customers takes no password.** An email or a phone number resolves
-to a profile and starts a session. Knowing an identifier is owning the account —
-so do not gate anything on `isSignedIn()` that a stranger must not reach.
-An account that is not a customer is refused at this door outright, and told
-only that. The intended fix for customers is a
-one-time code, and `resolveIdentifier()` is deliberately separate from
-`startSession()` so that step drops between them.
+**Customer sign-in requires an email-or-phone identifier and a password.** The
+server stores only salted scrypt hashes, verifies the password before opening a
+session, and never returns the hash. Checkout cannot be used as an alternate
+sign-in route: an existing profile must authenticate through `/api/auth/login`.
+Run migration 028 before deploying this code. Profiles created during the old
+identifier-only period have no trustworthy password to backfill and remain
+locked until their credential is reset.
 
 **The browser never talks to Supabase, and that must stay true.** No page loads
 a Supabase key or the client SDK. Realtime is off everywhere, because Supabase

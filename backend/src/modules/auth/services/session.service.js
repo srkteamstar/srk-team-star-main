@@ -2,15 +2,12 @@
  * modules/auth/services/session.service.js - resolving, and opening
  * ============================================================================
  *
- * THESE TWO ARE DELIBERATELY SEPARATE FUNCTIONS, and the separation is the
- * seam a real second factor for CUSTOMERS drops into.
+ * THESE TWO ARE DELIBERATELY SEPARATE FUNCTIONS.
  *
  * resolveIdentifier() answers "whose account is this?". startSession() answers
- * "let them in". Today the storefront login calls one and then the other with
- * nothing in between, which is exactly the weakness written up in the module
- * header: knowing an identifier is owning the account. Mailing or texting a
- * one-time code is a step BETWEEN these two calls - it needs no change to the
- * route's shape, to the browser module, or to the overlay.
+ * "let them in". The password verifier sits between them in the login route;
+ * keeping the grant separate makes it reviewable that no failed credential can
+ * fall through into a session.
  *
  * startSession() regenerates the session first, so a session id issued before
  * anyone signed in can never be reused to piggyback onto the one that follows.
@@ -53,8 +50,5 @@ function startSession(req, customerId) {
         });
     });
 }
-
-// Customer access is identifier-based by product decision. See the module
-// header for the second factor this seam is shaped to take.
 
 module.exports = { resolveIdentifier, startSession };

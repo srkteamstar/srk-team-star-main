@@ -166,7 +166,7 @@ documents is the `src` on each `<script>` tag.
 |---|---|
 | `backend/migrations/*.sql` (27 files) | `backend/migrations/` - byte-identical |
 | `backend/scripts/*` (7 files) | `backend/scripts/` - six of them, `require` paths updated for the gateway move. `enroll-admin-totp.js` went to the administration console |
-| `backend/test/**` (8 files) | `backend/test/` - one `require` path updated in `authz.test.js`; the suites themselves are untouched, which is what makes them evidence |
+| `backend/test/**` (8 files) | `backend/test/` - one `require` path updated during the move; the suites were later extended for password authentication |
 | `backend/templates/legal-shell.html` | `backend/templates/` - script `src` attributes rewritten, nothing else |
 | `backend/styles/tailwind.input.css` | `backend/styles/` |
 | `backend/playwright.config.js` | `backend/` - unchanged; its paths were already relative to `backend/` |
@@ -198,6 +198,8 @@ documents is the `src` on each `<script>` tag.
 | `backend/src/core/config/static-mounts.js` | The URL → folder table. Read by the server AND by `tools/verify-links.js`, so the two cannot disagree. |
 | `backend/src/core/health/probes.js` | `/health/live` and `/health/ready`, kept strictly apart. The one thing the doctrine asks for that `#1` had no form of. |
 | `backend/src/modules/*/[name].public.js` | Four published interfaces — the only files a sibling module may require. |
+| `backend/src/modules/auth/services/customer-password.service.js` | Salted scrypt hashing and constant-time customer-password verification. |
+| `backend/migrations/028_restore_customer_passwords.sql` | Idempotently restores the server-only password hash column after the historical removal. |
 | `tools/verify-links.js` | Every `href`/`src` in every page and module resolves through the real mount table. |
 | `tools/verify-boundaries.js` | The four import rules, enforced. |
 | `tools/verify-boot.js` | Every file loads, and the route table matches `tools/api-surface.json` both ways. |
@@ -237,7 +239,7 @@ Everything else was moved verbatim. These were not:
    explicitly by `main.js`'s `start()`. A `require` that can exit is a `require`
    no script or test can safely make.
 
-Each is verifiable: `npm test` (103 assertions), `npm run test:browser` (53),
+Each is verifiable: `npm test` (109 assertions), `npm run test:browser` (55),
 and `npm run verify` (three structural checks) all pass on `#2`.
 
 ---

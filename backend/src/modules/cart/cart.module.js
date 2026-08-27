@@ -31,11 +31,9 @@
  *
  * AND IT IS NOT AUTHENTICATION EITHER
  * -----------------------------------
- * requireCustomer is the whole boundary, and sign-in still takes no
- * password — so whoever can type a customer's email can already read that
- * customer's order history and postal address, and can now read their cart
- * as well. That is a strictly smaller disclosure than what the account
- * already exposed. It is worth naming rather than leaving to be discovered.
+ * requireCustomer is the whole boundary. The password decision belongs to
+ * modules/auth; this module accepts only the customer-scoped session that
+ * guard has already revalidated against the live profile row.
  *
  * WHAT THIS MODULE OWNS
  *   the cart_items table (migration 017)

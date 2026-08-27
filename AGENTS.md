@@ -44,8 +44,8 @@ That check is the rule; this paragraph is only the reason for it.
 cd backend
 npm install && npm start          # or: npm run dev  (node --watch)
 npm run verify                    # 3 structural checks, ~1s
-npm test                          # 103 API assertions
-npm run test:browser              # 53 Playwright journeys
+npm test                          # 109 API assertions
+npm run test:browser              # 55 Playwright journeys
 npm run test:all                  # verify + both suites
 npm run build:css                 # Tailwind, ahead of time
 npm run watch:css                 # the reflex that goes with npm run dev
@@ -135,13 +135,13 @@ RLS, so live updates from the browser *require* granting `anon` a SELECT policy,
 and the anon key is public by definition. **If you ever want live updates, add
 them server-side. Never by granting `anon` a policy.**
 
-**Sign-in for customers takes no password.** An email or phone resolves to a
-profile and starts a session. Knowing an identifier is owning the account. Do
-not gate anything on `isSignedIn()` that a stranger must not reach. The intended
-fix is a one-time code, and `resolveIdentifier()` in
-`modules/auth/services/session.service.js` is deliberately separate from
-`startSession()` so that step drops between them without changing the route, the
-browser module or the overlay.
+**Customer sign-in requires a password.** Registration and new-customer
+checkout store only a salted scrypt hash; login verifies it before
+`startSession()` can run. Checkout is not a second password verifier: if its
+contact details match an existing profile it refuses the order and sends the
+customer through the rate-limited sign-in door first. Profiles created during
+the former identifier-only period may have no hash; they stay locked until
+their credential is reset rather than falling back to passwordless access.
 
 **Only a customer gets a session here, and the refusal says nothing.**
 `POST /api/auth/login` answers a non-customer profile with a flat 403 and one
@@ -212,7 +212,7 @@ is looking at. The quote overlay is the route for those.
 
 ## Migrations
 
-27 files in `backend/migrations/`, run in order. Three are worth knowing:
+28 files in `backend/migrations/`, run in order. Four are worth knowing:
 
 - **025** puts the whole order write (header, items, frozen address, payment
   row) inside one Postgres function. **Must be run before checkout works at all.**
@@ -221,6 +221,9 @@ is looking at. The quote overlay is the route for those.
   give a phone number is lost** with a 23502. The route carries a single
   documented retry for the pre-027 window — **delete that retry once 027 is
   everywhere.**
+- **028** restores `user_profiles.password_hash` idempotently. **It must be run
+  before deploying the password-auth code.** Existing null hashes are locked
+  and need an operator-managed credential reset.
 - **020** converts four money columns to `numeric(12,2)`. Written, not run.
   Take a backup first — it is a type change on live financial records.
 
@@ -250,7 +253,8 @@ deployment turns into an outage.
 
 ## Still open before live keys
 
-- **Sign-in still takes no password.** That is the real gate.
+- Migration **028** must be run, and identifier-era accounts with null password
+  hashes need a credential-reset plan before the cutover.
 - Migration **020** written, not run.
 - The reconciliation schedule is **not installed** on any machine
   (`scripts/schedule-reconcile.ps1 -Apply`). The script existing is not the same

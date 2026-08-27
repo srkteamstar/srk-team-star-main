@@ -49,7 +49,7 @@
  *
  * WHAT IT IMPORTS FROM SIBLINGS, all through published interfaces:
  *   products.public -> findActiveProductsByIds   the catalogue it prices from
- *   auth.public     -> the guest-checkout account and the session it opens
+ *   auth.public     -> password-protecting a new guest account and opening its session
  *
  * The auth edge is the one WRITE crossing a module boundary in this codebase
  * (startSession). It stays a synchronous call rather than an event because the

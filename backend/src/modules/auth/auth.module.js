@@ -8,11 +8,11 @@
  * (exactly one row per customer, enforced by a unique index in migration
  * 011) — see that file for the schema reasoning.
  *
- * IDENTIFIER-BASED CUSTOMER ACCESS
- * --------------------------------
- * Sign-in resolves an email or phone identifier and starts a customer-scoped
- * session. An account that is not a customer is refused, and told only that.
- * ==========================================
+ * PASSWORD-BASED CUSTOMER ACCESS
+ * ------------------------------
+ * Sign-in resolves an email or phone identifier, verifies the stored scrypt
+ * hash, and only then starts a customer-scoped session. An account that is not
+ * a customer is refused, and told only that.
  *
  * Digits only, so "+91 89015 03544", "089015 03544" and "8901503544" all
  * resolve to one account. Written to phone_normalized on every write; the
@@ -41,7 +41,8 @@
  * READING A SESSION IS NOT THIS MODULE'S JOB. core/security/guards.js does
  * that, and every other module imports it from there. This module is the only
  * one that OPENS a session, which is why the door is here, behind one rate
- * limiter, and why there is exactly one of it.
+ * limiter, and why checkout may create only a brand-new password account — it
+ * never verifies credentials for an existing one.
  */
 const express = require('express');
 const { customerAuthController } = require('./controllers/customer-auth.controller');
