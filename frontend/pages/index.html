@@ -33,7 +33,73 @@
         header.bg-transparent .quote-nav-cta,
         header.bg-transparent .quote-nav-cta:hover {
             background-color: transparent;
-            color: inherit;
+            color: #ffffff;
+        }
+
+        /* The rebuilt hero has a dark brand ground, so the transparent header
+           uses its light state until the existing scroll controller gives it
+           a white background. */
+        header.bg-transparent nav a,
+        header.bg-transparent .srk-mobile-menu-button,
+        header.bg-transparent .srk-mobile-store-link {
+            color: #ffffff;
+        }
+
+        /* Both logo variants occupy one fixed navbar box. The light AVIF's
+           canvas keeps the same breathing-room proportion as the navbar text
+           CTA; the existing square PNG is enlarged and clipped inside that
+           box so its visible artwork lands at the identical size. */
+        .navbar-logo-link {
+            width: 100.3px;
+            height: 45.9px;
+            overflow: hidden;
+        }
+
+        .navbar-logo-image {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            transition: opacity 900ms ease-in-out;
+        }
+
+        .navbar-logo-image--transparent {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            opacity: 0;
+        }
+
+        .navbar-logo-image--solid {
+            width: 89.3%;
+            height: auto;
+            max-width: none;
+            opacity: 1;
+        }
+
+        header.bg-transparent .navbar-logo-image--transparent {
+            opacity: 1;
+        }
+
+        header.bg-transparent .navbar-logo-image--solid {
+            opacity: 0;
+        }
+
+        @media (max-width: 767px) {
+            header.srk-public-header>a.navbar-logo-link {
+                width: 78.2px;
+                height: 35.7px;
+            }
+
+            header.srk-public-header>a.navbar-logo-link img.navbar-logo-image--transparent {
+                width: 100% !important;
+                height: 100% !important;
+            }
+
+            header.srk-public-header>a.navbar-logo-link img.navbar-logo-image--solid {
+                width: 89.3% !important;
+                height: auto !important;
+            }
         }
 
         /* The reveal is the second beat of the header's own 500ms ease-in-out,
@@ -100,10 +166,12 @@
             </ul>
         </nav>
 
-        <a href="/index.html"
-            class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d4af37] rounded-sm">
-            <img src="/assets/icons/SRK-Team-Star-Logos/primary-bgless.png" alt="SRK Team Star Home"
-                class="h-[60px] w-auto select-none" />
+        <a href="/index.html" aria-label="SRK Team Star Home"
+            class="navbar-logo-link absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d4af37] rounded-sm">
+            <img src="/assets/icons/SRK-Team-Star-Logos/primary-bgless.png" alt="" aria-hidden="true"
+                class="navbar-logo-image navbar-logo-image--solid select-none" />
+            <img src="/assets/icons/SRK-Team-Star-Logos/primary-bgless-light.avif" alt="" aria-hidden="true"
+                class="navbar-logo-image navbar-logo-image--transparent select-none" />
         </a>
 
         <nav aria-label="Main Navigation Right" class="hidden md:flex items-center">
@@ -122,28 +190,39 @@
     </header>
 
     <main>
-        <section
-            class="hero relative bg-[image:linear-gradient(to_top,#ffffff_0%,#ffffff00_100px),url('/assets/hero-image.png')] bg-cover bg-center min-h-screen flex items-center pt-[70px]">
-            <div class="max-w-7xl mx-auto px-6 w-full">
-                <div class="max-w-2xl">
-                    <h1 id="hero-heading"
-                        class="text-3xl md:text-4xl lg:text-5xl font-bold leading-[1.1] opacity-0 tracking-tight text-[#12170f]">
-                        Precision Engineering for High-Volume Frame Manufacturing
-                    </h1>
-                    <p id="hero-subtext"
-                        class="text-base md:text-lg mt-5 opacity-0 translate-y-6 transition-all duration-[800ms] ease-out text-[#1f271b]/80 max-w-xl">
-                        Industrial-grade cutters, molders, and pinners designed to reduce labor costs and boost output.
-                    </p>
-                    <div id="hero-ctas"
-                        class="flex flex-wrap items-center gap-4 mt-8 opacity-0 translate-y-6 transition-all duration-[800ms] ease-out">
-                        <a href="/catalogue.html#machinery"
-                            class="inline-flex items-center justify-center bg-[#d4af37] text-white text-md font-semibold px-7 py-3 rounded hover:bg-[#c09f32] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d4af37] focus-visible:ring-offset-2">
-                            Explore Machinery
-                        </a>
-                        <a href="/store/store.html"
-                            class="inline-flex items-center justify-center bg-transparent text-[#12170f] text-md font-semibold px-7 py-3 rounded outline outline-2 outline-[#12170f] hover:bg-[#12170f] hover:text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#12170f] focus-visible:ring-offset-2">
-                            View Store
-                        </a>
+        <section data-machinery-hero
+            class="hero relative min-h-screen flex items-center bg-[#12170f] pt-[70px] overflow-hidden"
+            aria-label="Machinery highlights">
+            <div class="max-w-7xl mx-auto px-6 py-14 md:py-20 w-full">
+                <div class="grid grid-cols-1 lg:grid-cols-2 items-center gap-10 md:gap-14 lg:gap-16">
+                    <div class="max-w-2xl">
+                        <h1 id="hero-heading"
+                            class="text-3xl md:text-4xl lg:text-5xl font-bold leading-[1.1] opacity-0 tracking-tight text-white">
+                            Precision Engineering for High-Volume Frame Manufacturing
+                        </h1>
+                        <p id="hero-subtext"
+                            class="text-base md:text-lg mt-5 opacity-0 translate-y-6 transition-all duration-[800ms] ease-out text-white/75 max-w-xl leading-relaxed">
+                            Industrial-grade cutters, molders, and pinners designed to reduce labor costs and boost output.
+                        </p>
+                        <div id="hero-ctas"
+                            class="flex flex-wrap items-center gap-4 mt-8 opacity-0 translate-y-6 transition-all duration-[800ms] ease-out">
+                            <a href="/catalogue.html#machinery"
+                                class="inline-flex items-center justify-center bg-[#d4af37] text-white text-md font-semibold px-7 py-3 rounded hover:bg-[#c09f32] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d4af37] focus-visible:ring-offset-2">
+                                Explore Machinery
+                            </a>
+                            <a href="/store/store.html"
+                                class="inline-flex items-center justify-center bg-transparent text-white text-md font-semibold px-7 py-3 rounded outline outline-2 outline-white/60 hover:bg-white hover:text-[#12170f] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[#12170f]">
+                                View Store
+                            </a>
+                        </div>
+                    </div>
+                    <div data-machinery-hero-media
+                        class="relative w-full max-w-[390px] aspect-square max-h-[390px] justify-self-center overflow-hidden rounded-sm border border-white/20 bg-white/10 shadow-2xl"
+                        aria-label="Machinery product gallery" aria-live="off">
+                        <div data-machinery-hero-placeholder
+                            class="absolute inset-0 flex items-center justify-center bg-white/5">
+                            <div class="h-20 w-20 rounded-full border border-[#d4af37]/40 bg-[#d4af37]/10 animate-pulse"></div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -584,6 +663,8 @@
     <script src="/js/modules/marketing/image-slider-module.js"></script>
     <script src="/js/platform/general-scroll-reveal-module.js"></script>
     <script src="/js/modules/marketing/stats-control-module.js"></script>
+    <script src="/js/shared/product-section-shared-module.js"></script>
+    <script src="/js/modules/storefront/sections/machinery-hero-loader.js"></script>
 
     <script>
         const lenis = new Lenis({ lerp: 0.07, wheelMultiplier: 1 });

@@ -14,6 +14,16 @@
 (() => {
     'use strict';
 
+    // The store's legacy HTML still points here. Hand its hero over to the
+    // shared machinery gallery so both the current and cached shell use the
+    // same responsive panel and 2.5-second rotation.
+    if (document.getElementById('featured-hero')) {
+        const sharedLoader = document.createElement('script');
+        sharedLoader.src = '/js/modules/storefront/sections/machinery-hero-loader.js';
+        document.head.appendChild(sharedLoader);
+        return;
+    }
+
     // Slides alternate through the brand's dark grounds so consecutive products
     // read as distinct panels rather than one long block.
     const BACKDROPS = ['#2a3424', '#420c14', '#1f271b'];
@@ -60,15 +70,15 @@
             '<article class="shrink-0 w-full h-full relative" role="group" aria-roledescription="slide"' +
                 (isClone ? ' aria-hidden="true"' : ' aria-label="' + (index + 1) + ' of ' + total + '"') + '>',
             '  <div class="absolute inset-0 opacity-80 z-0" style="background:' + backdrop + '"></div>',
-            '  <div class="relative z-10 w-full flex items-center justify-between px-6 pt-9 pb-16 md:px-20 md:py-14 h-full gap-10 xl:gap-16">',
-            '    <div class="max-w-xl">',
+            '  <div class="relative z-10 w-full flex flex-wrap items-center justify-between px-6 pt-9 pb-16 md:px-20 md:py-14 h-full gap-10 xl:gap-16">',
+            '    <div class="w-full lg:w-auto max-w-xl">',
             '      <span class="inline-block px-3 py-1 border border-[#d4af37]/60 bg-[#d4af37]/10 text-[#d4af37] text-[11px] font-bold rounded-sm mb-4 md:mb-5 tracking-[0.14em] uppercase">Featured</span>',
             '      <h2 class="text-2xl md:text-4xl text-white font-bold mb-4 md:mb-5 leading-[1.15] tracking-tight text-balance">' + escapeHtml(product.name) + '</h2>',
             description,
             '      <a href="/store/store.html?product=' + encodeURIComponent(product.id) + '#all-products" data-hero-cta data-product-slug="' + escapeHtml(product.url_slug) + '"',
             '         class="inline-block bg-white text-[#12170f] font-bold px-8 py-3.5 rounded hover:bg-[#d4af37] hover:text-white transition-all duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d4af37] focus-visible:ring-offset-2 focus-visible:ring-offset-[#12170f]">View Product</a>',
             '    </div>',
-            '    <div class="hidden lg:flex flex-1 h-full items-center justify-center py-2">',
+            '    <div class="flex w-full lg:w-auto lg:flex-1 h-[190px] sm:h-[230px] lg:h-full items-center justify-center py-2">',
             '      ' + imagePanel(product),
             '    </div>',
             '  </div>',

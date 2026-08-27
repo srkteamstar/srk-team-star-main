@@ -114,6 +114,116 @@ test('Store home drops the Best Sellers row when nothing is flagged', async ({ p
     await expect(page.locator('#best-sellers-preview')).toHaveCount(0);
 });
 
+test('Landing hero keeps every Machinery product in the mobile gallery flow', async ({ page }) => {
+    const image = colour => `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='90'%3E%3Crect width='120' height='90' fill='%23${colour}'/%3E%3C/svg%3E`;
+    const products = [
+        {
+            id: 1, name: 'Main Machinery One', category_id: 10, category_name: 'Machinery',
+            images: [
+                { slot: 1, is_main: true, url: image('d4af37') },
+                { slot: 2, is_main: false, url: image('ff0000') }
+            ]
+        },
+        {
+            id: 2, name: 'Nested Machinery Two', category_id: 12, category_name: 'Underpinners',
+            images: [{ slot: 1, is_main: true, url: image('f1f5f9') }]
+        },
+        {
+            id: 3, name: 'Not Machinery', category_id: 11, category_name: 'Mouldings',
+            images: [{ slot: 1, is_main: true, url: image('00ff00') }]
+        },
+        {
+            id: 4, name: 'Legacy Machinery', category_id: 10, category_name: 'Machinery',
+            images: [{ slot: 1, is_main: false, url: image('ff0000') }],
+            image_url: image('0000ff')
+        }
+    ];
+    const categories = [
+        { id: 10, name: 'Machinery', url_slug: 'machinery', parent_id: null },
+        { id: 12, name: 'Underpinners', url_slug: 'underpinners', parent_id: 10 },
+        { id: 11, name: 'Mouldings', url_slug: 'mouldings', parent_id: null }
+    ];
+
+    await page.route('**/api/products/public', route => route.fulfill({ json: products }));
+    await page.route('**/api/categories/public', route => route.fulfill({ json: categories }));
+    await page.setViewportSize({ width: 390, height: 844 });
+
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
+
+    const hero = page.locator('[data-machinery-hero]');
+    const gallery = hero.locator('[data-machinery-hero-media]');
+    const images = gallery.locator('[data-machinery-hero-image]');
+    await expect(hero).toHaveCSS('background-color', 'rgb(18, 23, 15)');
+    await expect(gallery).toBeVisible();
+    await expect(images).toHaveCount(3);
+    const slideIds = await gallery.locator('[data-machinery-hero-slide]')
+        .evaluateAll(nodes => nodes.map(node => node.getAttribute('data-product-id')).sort());
+    expect(slideIds).toEqual(['1', '2', '4']);
+
+    const actionBox = await hero.locator('a').last().boundingBox();
+    const galleryBox = await gallery.boundingBox();
+    expect(actionBox && galleryBox && galleryBox.y > actionBox.y + actionBox.height).toBeTruthy();
+
+    const sources = await images.evaluateAll(nodes => nodes.map(node => node.src));
+    expect(sources.some(source => source.includes('ff0000'))).toBeFalsy();
+    expect(sources.some(source => source.includes('00ff00'))).toBeFalsy();
+    expect(sources.some(source => source.includes('0000ff'))).toBeTruthy();
+
+    const active = page.locator('[data-machinery-hero-image][data-active="true"]');
+    const firstSource = await active.getAttribute('src');
+    await expect.poll(() => active.getAttribute('src'), { timeout: 4000 }).not.toBe(firstSource);
+});
+
+test('Store hero keeps every Machinery product in the mobile gallery flow', async ({ page }) => {
+    const image = colour => `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='90'%3E%3Crect width='120' height='90' fill='%23${colour}'/%3E%3C/svg%3E`;
+    const products = [
+        { id: 1, name: 'Main Machinery One', category_id: 10, category_name: 'Machinery', images: [{ slot: 1, is_main: true, url: image('d4af37') }] },
+        { id: 2, name: 'Nested Machinery Two', category_id: 12, category_name: 'Underpinners', images: [{ slot: 1, is_main: true, url: image('f1f5f9') }] },
+        { id: 3, name: 'Not Machinery', category_id: 11, category_name: 'Mouldings', images: [{ slot: 1, is_main: true, url: image('00ff00') }] },
+        { id: 4, name: 'Legacy Machinery', category_id: 10, category_name: 'Machinery', images: [{ slot: 1, is_main: false, url: image('ff0000') }], image_url: image('0000ff') }
+    ];
+    const categories = [
+        { id: 10, name: 'Machinery', url_slug: 'machinery', parent_id: null },
+        { id: 12, name: 'Underpinners', url_slug: 'underpinners', parent_id: 10 },
+        { id: 11, name: 'Mouldings', url_slug: 'mouldings', parent_id: null }
+    ];
+
+    await page.route('**/api/products/public', route => route.fulfill({ json: products }));
+    await page.route('**/api/categories/public', route => route.fulfill({ json: categories }));
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto('/store/store.html', { waitUntil: 'domcontentloaded' });
+
+    const hero = page.locator('[data-machinery-hero]');
+    const gallery = hero.locator('[data-machinery-hero-media]');
+    const images = gallery.locator('[data-machinery-hero-image]');
+    await expect(hero).toHaveCSS('background-color', 'rgb(18, 23, 15)');
+    await expect(gallery).toBeVisible();
+    await expect(images).toHaveCount(3);
+    const slideIds = await gallery.locator('[data-machinery-hero-slide]')
+        .evaluateAll(nodes => nodes.map(node => node.getAttribute('data-product-id')).sort());
+    expect(slideIds).toEqual(['1', '2', '4']);
+
+    const actionBox = await hero.locator('a').last().boundingBox();
+    const galleryBox = await gallery.boundingBox();
+    expect(actionBox && galleryBox && galleryBox.y > actionBox.y + actionBox.height).toBeTruthy();
+});
+
+test('Landing navbar crossfades from the light AVIF logo to the current solid-header logo', async ({ page }) => {
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
+
+    const lightLogo = page.locator('.navbar-logo-image--transparent');
+    const solidLogo = page.locator('.navbar-logo-image--solid');
+    await expect(lightLogo).toHaveAttribute('src', /primary-bgless-light\.avif$/);
+    await expect(lightLogo).toHaveCSS('opacity', '1');
+    await expect(solidLogo).toHaveCSS('opacity', '0');
+    await expect(lightLogo).toHaveCSS('transition-duration', '0.9s');
+
+    await page.evaluate(() => window.scrollTo(0, 120));
+    await expect.poll(() => page.locator('header').getAttribute('class')).toContain('bg-white');
+    await expect(lightLogo).toHaveCSS('opacity', '0');
+    await expect(solidLogo).toHaveCSS('opacity', '1');
+});
+
 test('Blog category filtering hides non-matching authored layouts', async ({ page }) => {
     await page.goto('/blog/', { waitUntil: 'domcontentloaded' });
     await page.locator('[data-blog-filter="machinery"]').click();
