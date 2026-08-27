@@ -9,7 +9,8 @@
             background:#12170f;color:#fff!important;font-weight:700;transform:translateY(-150%);transition:transform .15s ease}
         .srk-skip-link:focus{transform:translateY(0);outline:3px solid #d4af37;outline-offset:2px}
         .srk-mobile-menu-button,.srk-shell-menu-button,.srk-shell-menu-wrap,.srk-mobile-store-link{display:none}
-        .srk-mobile-backdrop{position:fixed;inset:0;background:rgba(18,23,15,.58);z-index:70;border:0;padding:0;opacity:0;transition:opacity .25s ease}
+        .srk-mobile-backdrop{position:fixed;inset:0;background:rgba(8,11,7,.68);z-index:70;border:0;padding:0;opacity:0;
+            -webkit-backdrop-filter:blur(2px);backdrop-filter:blur(2px);transition:opacity .3s ease}
         .srk-mobile-backdrop[data-open="true"]{opacity:1}
 
         /* The public panel is deliberately the same object as the store's
@@ -22,31 +23,47 @@
            panel's styling is a single block and splitting it across a class
            would be harder to read, not easier. */
         .srk-mobile-panel{position:fixed;top:0;left:0;bottom:0;z-index:80;display:flex;flex-direction:column;
-            width:min(84vw,300px);height:100dvh;overflow-y:auto;overscroll-behavior:contain;background:#fff;padding:1.25rem 1rem 1.5rem;
-            box-shadow:12px 0 35px rgba(18,23,15,.18);transform:translateX(-105%);transition:transform .25s ease}
+            width:min(88vw,356px);height:100dvh;overflow-y:auto;overscroll-behavior:contain;
+            background:linear-gradient(180deg,#fbfaf7 0%,#fff 58%);padding:0 1.25rem 1.25rem;
+            border-right:1px solid rgba(212,175,55,.24);box-shadow:22px 0 60px rgba(8,11,7,.28);
+            transform:translateX(-105%);transition:transform .32s cubic-bezier(.22,1,.36,1)}
         .srk-mobile-panel[data-open="true"]{transform:translateX(0)}
-        .srk-mobile-panel__head{display:flex;align-items:center;justify-content:space-between;gap:.75rem;
-            padding-bottom:1.25rem;margin-bottom:1rem;border-bottom:1px solid rgba(18,23,15,.1)}
-        .srk-mobile-panel__head img{height:52px;width:auto;user-select:none}
+        .srk-mobile-panel__head{position:sticky;top:0;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:.75rem;
+            min-height:88px;padding:1rem 0;margin-bottom:.8rem;border-bottom:1px solid rgba(18,23,15,.08);
+            background:rgba(251,250,247,.92);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}
+        .srk-mobile-panel__head img{height:48px;width:auto;user-select:none}
         .srk-mobile-panel__close{display:inline-flex;align-items:center;justify-content:center;flex:none;
-            width:38px;height:38px;border:1px solid rgba(18,23,15,.12);border-radius:999px;background:#fff;
-            color:#12170f;transition:color .3s ease,border-color .3s ease,background-color .3s ease}
-        .srk-mobile-panel__close:hover{color:#d4af37;border-color:#d4af37;background:rgba(212,175,55,.05)}
-        .srk-mobile-panel__close svg{stroke:currentColor}
-        .srk-mobile-panel__group{display:flex;flex-direction:column;gap:.5rem;list-style:none;margin:0;padding:0}
+            width:42px;height:42px;border:1px solid rgba(18,23,15,.1);border-radius:999px;background:#fff;
+            color:#12170f;box-shadow:0 5px 18px rgba(18,23,15,.07);transition:color .3s ease,border-color .3s ease,background-color .3s ease,transform .3s ease}
+        .srk-mobile-panel__close:hover{color:#fff;border-color:#12170f;background:#12170f;transform:rotate(4deg)}
+        .srk-mobile-panel__close svg{stroke:#12170f;transition:stroke .25s ease}
+        .srk-mobile-panel__close:hover svg{stroke:#fff}
+        .srk-mobile-panel__group{display:flex;flex-direction:column;gap:.38rem;list-style:none;margin:0;padding:0}
+        .srk-mobile-panel__group:before{content:"Explore";display:block;padding:.35rem .9rem .45rem;
+            font-size:.66rem;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:rgba(31,39,27,.48)}
         /* Painted here rather than with utility classes: every page's inline
            <style> opens with a universal star rule setting colour on every
            element, and a direct match beats an inherited one. Same trap the
            store icon rules answer. */
-        .srk-mobile-panel__group a{display:block;padding:.55rem .75rem;border-radius:2px;
-            font-size:.875rem;font-weight:600;color:#1F271B;transition:color .3s ease,background-color .3s ease}
-        .srk-mobile-panel__group a:hover{color:#d4af37;background:rgba(212,175,55,.05)}
-        .srk-mobile-panel__group a[aria-current="page"]{color:#d4af37;background:rgba(212,175,55,.1)}
-        .srk-mobile-panel__foot{margin-top:auto;padding-top:1.25rem;border-top:1px solid rgba(18,23,15,.1)}
-        .srk-mobile-panel__cta{display:flex;align-items:center;justify-content:center;border-radius:4px;
-            background:#420c1f;padding:.7rem 1rem;font-size:.875rem;font-weight:700;color:#fff;
-            transition:background-color .3s ease}
-        .srk-mobile-panel__cta:hover{background:#5a1029}
+        .srk-mobile-panel__group a{position:relative;display:flex;align-items:center;min-height:50px;padding:.75rem 2.2rem .75rem 1rem;
+            border:1px solid transparent;border-radius:12px;font-size:.94rem;font-weight:650;color:#1F271B;
+            transition:color .25s ease,background-color .25s ease,border-color .25s ease,transform .25s ease,box-shadow .25s ease}
+        .srk-mobile-panel__group a:after{content:"›";position:absolute;right:1rem;top:50%;font-size:1.35rem;font-weight:400;
+            color:rgba(31,39,27,.3);transform:translateY(-52%);transition:color .25s ease,transform .25s ease}
+        .srk-mobile-panel__group a:hover{color:#9d7b10;background:#fff;border-color:rgba(212,175,55,.22);transform:translateX(3px)}
+        .srk-mobile-panel__group a:hover:after{color:#d4af37;transform:translate(2px,-52%)}
+        .srk-mobile-panel__group a[aria-current="page"]{color:#8d6c08;background:linear-gradient(90deg,rgba(212,175,55,.17),rgba(212,175,55,.07));
+            border-color:rgba(212,175,55,.28);box-shadow:0 8px 22px rgba(92,70,8,.07)}
+        .srk-mobile-panel__group a[aria-current="page"]:before{content:"";position:absolute;left:-1px;top:11px;bottom:11px;width:3px;border-radius:0 3px 3px 0;background:#d4af37}
+        .srk-mobile-panel__foot{margin-top:auto;padding:1rem;border:0;border-radius:18px;background:#12170f;box-shadow:0 12px 30px rgba(18,23,15,.14)}
+        .srk-mobile-panel__foot:before{content:"Talk to our team";display:block;margin-bottom:.65rem;font-size:.66rem;font-weight:800;
+            letter-spacing:.16em;text-transform:uppercase;color:rgba(255,255,255,.52)}
+        .srk-mobile-panel__cta{display:flex;align-items:center;justify-content:space-between;border-radius:11px;
+            background:#d4af37;padding:.82rem 1rem;font-size:.9rem;font-weight:750;color:#12170f;
+            transition:background-color .25s ease,transform .25s ease}
+        .srk-mobile-panel__cta:after{content:"↗";font-size:1rem;color:#12170f}
+        .srk-mobile-panel__cta:hover{background:#e0bd4d;transform:translateY(-1px)}
+        .srk-store-drawer-head{display:none}
         .srk-mobile-panel a:focus-visible,.srk-mobile-panel__close:focus-visible{outline:2px solid #d4af37;outline-offset:2px}
 
         @media (prefers-reduced-motion:reduce){
@@ -143,11 +160,65 @@
                stops a drag past its end being handed to the page behind — the
                same rule .srk-mobile-panel above carries, and the same one
                scroll-lock-module.js publishes as .srk-scroll. */
-            .srk-store-sidebar{position:fixed!important;top:0;left:0;bottom:0;z-index:90!important;width:min(84vw,300px)!important;height:100dvh!important;overflow-y:auto!important;overscroll-behavior:contain;transform:translateX(-105%);transition:transform .25s ease;background:#fff!important;box-shadow:12px 0 35px rgba(18,23,15,.18)}
+            .srk-store-sidebar{position:fixed!important;top:0;left:0;bottom:0;z-index:90!important;width:min(88vw,356px)!important;height:100dvh!important;
+                display:flex!important;flex-direction:column!important;justify-content:flex-start!important;align-items:stretch!important;overflow-y:auto!important;overscroll-behavior:contain;
+                padding:0!important;transform:translateX(-105%);transition:transform .32s cubic-bezier(.22,1,.36,1);
+                background:linear-gradient(180deg,#fbfaf7 0%,#fff 58%)!important;border-right:1px solid rgba(212,175,55,.24)!important;
+                box-shadow:22px 0 60px rgba(8,11,7,.28)}
             .srk-store-sidebar[data-open="true"]{transform:translateX(0)}
+            .srk-store-drawer-head{position:sticky;top:0;z-index:3;display:flex;align-items:center;justify-content:space-between;
+                min-height:78px;padding:1rem 1.25rem;border-bottom:1px solid rgba(18,23,15,.08);
+                background:rgba(251,250,247,.92);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}
+            .srk-store-drawer-head__copy{display:flex;flex-direction:column;gap:.12rem}
+            .srk-store-drawer-head__eyebrow{font-size:.62rem;font-weight:800;letter-spacing:.18em;text-transform:uppercase;color:#9d7b10}
+            .srk-store-drawer-head__title{font-size:1.05rem;font-weight:750;letter-spacing:-.01em;color:#12170f}
+            .srk-store-drawer-close{display:inline-flex;align-items:center;justify-content:center;width:42px;height:42px;flex:none;
+                border:1px solid rgba(18,23,15,.1);border-radius:999px;background:#fff;color:#12170f;box-shadow:0 5px 18px rgba(18,23,15,.07);
+                transition:background-color .25s ease,color .25s ease,transform .25s ease}
+            .srk-store-drawer-close:hover{background:#12170f;color:#fff;transform:rotate(4deg)}
+            .srk-store-drawer-close svg{stroke:#12170f;transition:stroke .25s ease}
+            .srk-store-drawer-close:hover svg{stroke:#fff}
+            .srk-store-sidebar>div:not(.srk-store-drawer-head){width:100%!important}
+            .srk-store-sidebar>div:nth-of-type(2){padding-top:1rem}
+            .srk-store-sidebar>div:nth-of-type(2)>a{width:auto!important;min-height:92px;margin:0 1.25rem 1rem!important;
+                border:1px solid rgba(18,23,15,.07);border-radius:18px;background:#fff;box-shadow:0 10px 30px rgba(18,23,15,.055)}
+            .srk-store-sidebar>div:nth-of-type(2)>a img{width:112px!important;height:auto!important}
+            .srk-store-sidebar #policy-nav{display:flex;flex-direction:column;gap:.38rem!important;padding:0 1.25rem!important}
+            .srk-store-sidebar #policy-nav:before{content:"Browse";display:block;padding:.35rem .9rem .45rem;font-size:.66rem;font-weight:800;
+                letter-spacing:.18em;text-transform:uppercase;color:rgba(31,39,27,.48)}
+            .srk-store-sidebar #policy-nav li,.srk-store-sidebar #policy-nav-secondary li{transform:none!important;opacity:1!important}
+            .srk-store-sidebar .nav-btn{position:relative;display:flex;align-items:center;min-height:50px;padding:.75rem 2.35rem .75rem 1rem!important;
+                border:1px solid transparent;border-radius:12px!important;font-size:.94rem!important;font-weight:650!important;color:#1f271b!important;
+                transition:color .25s ease,background-color .25s ease,border-color .25s ease,transform .25s ease,box-shadow .25s ease!important}
+            .srk-store-sidebar .nav-btn:after{content:"›";position:absolute;right:1rem;top:50%;font-size:1.35rem;font-weight:400;
+                color:rgba(31,39,27,.3);transform:translateY(-52%);transition:color .25s ease,transform .25s ease}
+            .srk-store-sidebar #policy-nav .nav-btn:hover{color:#9d7b10!important;background:#fff!important;border-color:rgba(212,175,55,.22);transform:translateX(3px)}
+            .srk-store-sidebar #policy-nav .nav-btn:hover:after{color:#d4af37;transform:translate(2px,-52%)}
+            .srk-store-sidebar #policy-nav .nav-btn[class~="text-[#d4af37]"]{color:#8d6c08!important;
+                background:linear-gradient(90deg,rgba(212,175,55,.17),rgba(212,175,55,.07))!important;
+                border-color:rgba(212,175,55,.28);box-shadow:0 8px 22px rgba(92,70,8,.07)}
+            .srk-store-sidebar #policy-nav .nav-btn[class~="text-[#d4af37]"]:before{content:"";position:absolute;left:-1px;top:11px;bottom:11px;
+                width:3px;border-radius:0 3px 3px 0;background:#d4af37}
+            .srk-store-sidebar>div:last-child{margin-top:auto;padding:1rem 1.25rem 1.25rem}
+            .srk-store-sidebar #policy-nav-secondary{display:flex;flex-direction:column;gap:.4rem!important;padding:1rem!important;border:0!important;
+                border-radius:18px;background:#12170f;box-shadow:0 12px 30px rgba(18,23,15,.14)}
+            .srk-store-sidebar #policy-nav-secondary:before{content:"Personal support";display:block;padding:.1rem .2rem .45rem;font-size:.66rem;font-weight:800;
+                letter-spacing:.16em;text-transform:uppercase;color:rgba(255,255,255,.52)}
+            .srk-store-sidebar #policy-nav-secondary .nav-btn{min-height:46px;padding:.68rem 2.2rem .68rem .8rem!important;color:#fff!important;border-color:rgba(255,255,255,.08)}
+            .srk-store-sidebar #policy-nav-secondary .nav-btn:after{color:rgba(255,255,255,.48)}
+            .srk-store-sidebar #policy-nav-secondary .nav-btn:hover{color:#12170f!important;background:#d4af37!important;border-color:#d4af37;transform:translateX(2px)}
+            .srk-store-sidebar #policy-nav-secondary .nav-btn:hover:after{color:#12170f;transform:translate(2px,-52%)}
             .srk-store-main{width:100%!important;min-width:0!important}
             .srk-store-main>section{min-width:0!important}
-            .srk-shell-menu-wrap{display:flex;position:sticky;top:0;z-index:45;align-items:center;gap:.75rem;padding:.75rem 1rem;background:#fff;border-bottom:1px solid rgba(18,23,15,.1)}
+            .srk-shell-menu-wrap{display:flex;position:sticky;top:0;z-index:45;align-items:center;gap:.85rem;padding:.75rem 1rem;
+                background:rgba(255,255,255,.94);border-bottom:1px solid rgba(18,23,15,.08);box-shadow:0 8px 24px rgba(18,23,15,.055);
+                -webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px)}
+            .srk-shell-menu-wrap .srk-shell-menu-button{width:46px;height:46px;margin:0;background:#12170f;color:#fff;box-shadow:0 7px 18px rgba(18,23,15,.18)}
+            .srk-shell-menu-wrap .srk-shell-menu-button:hover{background:#d4af37;color:#12170f}
+            .srk-shell-menu-wrap .srk-shell-menu-button svg{stroke:#fff;transition:stroke .2s ease}
+            .srk-shell-menu-wrap .srk-shell-menu-button:hover svg{stroke:#12170f}
+            .srk-shell-menu-wrap strong{display:flex;flex-direction:column;font-size:.96rem;line-height:1.2;color:#12170f}
+            .srk-shell-menu-wrap strong:after{content:"Products, quotes and support";margin-top:.2rem;font-size:.68rem;font-weight:500;color:rgba(31,39,27,.52)}
             #dynamic-view{min-width:0!important}
             #main-content{padding:1.25rem!important;min-width:0!important}
             .srk-legal-layout{display:block!important}
@@ -393,9 +464,12 @@
         button.className = 'srk-shell-menu-button';
         button.innerHTML = icon('Open section navigation');
         button.setAttribute('aria-label', 'Open section navigation');
+        button.setAttribute('aria-expanded', 'false');
+        if (!sidebar.id) sidebar.id = 'srk-' + kind + '-navigation';
+        button.setAttribute('aria-controls', sidebar.id);
         wrap.appendChild(button);
         const label = document.createElement('strong');
-        label.textContent = 'Store navigation';
+        label.textContent = kind === 'store' ? 'Browse store' : 'Section navigation';
         wrap.appendChild(label);
         main.prepend(wrap);
 
@@ -406,6 +480,7 @@
         // when nothing locked would decrement a count another surface is
         // holding — releasing the page under a cart drawer that is still there.
         let sidebarOpen = false;
+        let sidebarDismiss = null;
 
         const close = () => {
             if (!sidebarOpen) return;
@@ -415,7 +490,34 @@
             shade = null;
             unlockPage();
             button.setAttribute('aria-expanded', 'false');
+            button.focus();
         };
+
+        if (kind === 'store') {
+            const drawerHead = document.createElement('div');
+            drawerHead.className = 'srk-store-drawer-head';
+
+            const copy = document.createElement('div');
+            copy.className = 'srk-store-drawer-head__copy';
+            const eyebrow = document.createElement('span');
+            eyebrow.className = 'srk-store-drawer-head__eyebrow';
+            eyebrow.textContent = 'SRK Team Star';
+            const title = document.createElement('strong');
+            title.className = 'srk-store-drawer-head__title';
+            title.textContent = 'Store menu';
+            copy.append(eyebrow, title);
+
+            sidebarDismiss = document.createElement('button');
+            sidebarDismiss.type = 'button';
+            sidebarDismiss.className = 'srk-store-drawer-close';
+            sidebarDismiss.setAttribute('aria-label', 'Close store navigation');
+            sidebarDismiss.innerHTML = closeIcon('Close store navigation');
+            sidebarDismiss.addEventListener('click', close);
+
+            drawerHead.append(copy, sidebarDismiss);
+            sidebar.prepend(drawerHead);
+        }
+
         button.addEventListener('click', () => {
             if (sidebarOpen) return;
             sidebarOpen = true;
@@ -423,6 +525,7 @@
             button.setAttribute('aria-expanded', 'true');
             shade = backdrop(close);
             lockPage();
+            window.requestAnimationFrame(() => sidebarDismiss?.focus());
         });
         sidebar.addEventListener('click', event => {
             if (event.target.closest('a,button') && window.innerWidth < 768) window.setTimeout(close, 0);

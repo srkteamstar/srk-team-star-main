@@ -508,3 +508,44 @@ test('the mobile navigation panel holds a Lenis page still', async ({ page }) =>
     await expect.poll(() => page.evaluate(() => Math.round(window.scrollY))).toBe(before);
     expect((await bodyState(page)).position).toBe('static');
 });
+
+test('the mobile store drawer presents and dismisses the navigation system', async ({ page }) => {
+    await page.setViewportSize(PHONE);
+    await page.goto('/store/store.html', { waitUntil: 'domcontentloaded' });
+
+    const trigger = page.locator('.srk-shell-menu-button');
+    await expect(trigger).toBeVisible();
+    await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    await expect(trigger.locator('svg')).toHaveCSS('stroke', 'rgb(255, 255, 255)');
+    await trigger.click();
+
+    const drawer = page.locator('.srk-store-sidebar');
+    const dismiss = drawer.locator('.srk-store-drawer-close');
+    await expect(drawer).toHaveAttribute('data-open', 'true');
+    await expect(dismiss).toBeVisible();
+    await expect(dismiss).toBeFocused();
+    await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+
+    const visualState = await drawer.evaluate(node => {
+        const active = node.querySelector('#policy-nav .nav-btn[class~="text-[#d4af37]"]');
+        const support = node.querySelector('#policy-nav-secondary');
+        return {
+            width: parseFloat(getComputedStyle(node).width),
+            activeBackground: getComputedStyle(active).backgroundImage,
+            supportBackground: getComputedStyle(support).backgroundColor,
+            overscroll: getComputedStyle(node).overscrollBehaviorY
+        };
+    });
+
+    expect(visualState.width).toBeGreaterThan(320);
+    expect(visualState.width).toBeLessThanOrEqual(356);
+    expect(visualState.activeBackground).toContain('linear-gradient');
+    expect(visualState.supportBackground).toBe('rgb(18, 23, 15)');
+    expect(visualState.overscroll).toBe('contain');
+
+    await dismiss.click();
+    await expect(drawer).not.toHaveAttribute('data-open', 'true');
+    await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    await expect(trigger).toBeFocused();
+    await expect.poll(() => page.evaluate(() => window.srkScrollLock.depth())).toBe(0);
+});
