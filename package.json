@@ -1,0 +1,24 @@
+{
+  "name": "srk-team-star",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node tools/build-vercel-public.js",
+    "verify": "npm --prefix backend run verify",
+    "test": "npm --prefix backend test",
+    "test:all": "npm --prefix backend run test:all"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.112.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.6.2",
+    "express-session": "^1.19.0",
+    "multer": "^2.2.0"
+  }
+}

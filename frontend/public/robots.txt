@@ -1,0 +1,16 @@
+# The catalogue and the marketing pages are meant to be found.
+#
+# A checkout and a search results URL are not: they are things a person
+# reaches from inside the site, not things that should sit in someone else's
+# index. Neither is protected BY this file — nothing behind them is reachable
+# without a session, and that is enforced server-side. This only keeps them
+# out of search results, which a well-behaved crawler honours and a
+# badly-behaved one was never going to.
+#
+# The X-Robots-Tag: noindex header on /store/checkout.html is the half a
+# crawler cannot ignore by fetching the page anyway. See the PRIVATE_PATH
+# block in backend/src/core/http/private-paths.js.
+
+User-agent: *
+Disallow: /store/checkout.html
+Disallow: /api/

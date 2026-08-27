@@ -1,0 +1,31 @@
+# Secrets. backend/.env holds the Supabase service-role key and the Razorpay
+# secrets; it must never be committed. PRIVATE_PATH already refuses to serve
+# it, and this is the other half of that.
+backend/.env
+backend/.env.*
+!backend/.env.example
+
+# Installed, not authored.
+node_modules/
+
+# Operator output: reconciliation reports and the lock that serialises them.
+backend/logs/
+
+# Playwright's own artefacts.
+backend/test-results/
+backend/playwright-report/
+backend/blob-report/
+test-results/
+playwright-report/
+
+# Generated only during a Vercel build. The authored frontend remains under
+# frontend/; committing this directory would duplicate hundreds of megabytes.
+/public/
+/.vercel/
+
+# Editor and OS noise.
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
+.idea/

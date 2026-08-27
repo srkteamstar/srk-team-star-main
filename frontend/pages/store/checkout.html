@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Checkout - SRK Team Star</title>
+
+    <link rel="shortcut icon" href="/assets/icons/SRK-Team-Star-Logos/primary.png" type="image/x-icon">
+
+    <link rel="stylesheet" href="/assets/vendor/tailwind.build.css">
+    <script src="/js/platform/disable-input-suggestions-module.js"></script>
+    <!-- Holds the page still while anything is open over it. First, and on
+         every document: the mobile nav panel below needs it, and so does
+         every overlay that opens later. -->
+    <script src="/js/platform/scroll-lock-module.js"></script>
+    <script src="/js/platform/responsive-navigation-module.js"></script>
+<style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            color: #1f271b;
+            font-family: "Manrope", sans-serif;
+            font-optical-sizing: auto;
+            font-weight: 500;
+            font-style: normal;
+        }
+
+        h1,
+        h2,
+        h3,
+        h4,
+        h5,
+        h6 {
+            color: #12170f;
+            font-family: "Schibsted Grotesk", sans-serif;
+            font-weight: 700;
+        }
+
+        /* The `*` rule above sets `color` on every element, the <svg>
+           included, so an icon drawn with `currentColor` can never inherit
+           the colour its container hands down. Same trap store.html
+           documents; these paint the glyph directly. */
+        .store-icon svg {
+            stroke: #12170f;
+            transition: stroke 200ms ease;
+        }
+
+        .store-icon:hover svg,
+        .store-icon:focus-visible svg {
+            stroke: #d4af37;
+        }
+
+        .no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+
+        .no-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+    </style>
+    <link rel="stylesheet" href="/assets/vendor/fonts/fonts.css">
+</head>
+
+<body class="bg-[#f8fafc] selection:bg-[#d4af37] selection:text-white" data-razorpay-checkout>
+
+    <!-- Header. Deliberately not the store's full nav: checkout is a task, and
+         every extra way out of it is a way to lose a half-typed address. The
+         one link back is explicit. -->
+    <header class="sticky top-0 z-30 bg-white border-b border-[#12170f]/10">
+        <div class="w-full max-w-7xl mx-auto px-6 md:px-10 h-[72px] flex items-center justify-between gap-4">
+            <a href="/store/store.html"
+                class="flex items-center gap-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d4af37] rounded-sm">
+                <img src="/assets/icons/SRK-Team-Star-Logos/primary-bgless.png" alt="SRK Team Star"
+                    class="h-9 w-auto select-none"
+                    onerror="this.outerHTML='<span class=&quot;text-xl font-bold text-[#d4af37]&quot;>SRK</span>'" />
+            </a>
+
+            <h1 class="text-base md:text-lg font-bold tracking-tight">Checkout</h1>
+
+            <a href="/store/store.html"
+                class="store-icon text-xs font-bold text-[#1f271b]/60 hover:text-[#12170f] transition-colors flex items-center gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d4af37] rounded-sm px-1 py-1">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path>
+                </svg>
+                <span class="hidden sm:inline">Back to store</span>
+            </a>
+        </div>
+    </header>
+
+    <!-- Everything below is painted by checkout-module.js. The page ships with
+         the three states empty rather than with a form that might be about to
+         be replaced by "your cart is empty". -->
+    <main id="checkout-root" class="w-full max-w-7xl mx-auto px-6 md:px-10 py-10 md:py-14">
+        <div id="checkout-loading" class="py-24 text-center">
+            <p class="text-sm text-[#1f271b]/50">Loading your order…</p>
+        </div>
+    </main>
+
+    <!-- The footer carried one policy link, which is the wrong number: a
+         customer is about to place an order and the terms, the shipping
+         policy and the returns policy are all things they may reasonably
+         want to read *first*. So every policy the site publishes is listed
+         here, in the same order and under the same names as the main site's
+         footer (index.html's "Legal" column) — one list of names, so a
+         customer who has seen them elsewhere recognises them here.
+
+         EVERY ONE OPENS IN A NEW TAB. That is the load-bearing part, and it
+         is not a stylistic preference: this page holds a half-typed delivery
+         address and a payment-method choice in JavaScript state, none of
+         which is persisted anywhere. Navigating away in this tab to read a
+         returns policy and pressing Back would repaint the page from a fresh
+         /api/checkout/summary with an empty form. `rel="noopener"` goes with
+         `target="_blank"` as it always must — without it the opened page can
+         reach back through window.opener. -->
+    <footer class="border-t border-[#12170f]/10 bg-white">
+        <div class="w-full max-w-7xl mx-auto px-6 md:px-10 py-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+            <p class="text-[11px] text-[#1f271b]/40 text-center md:text-left">&copy; SRK Team Star. Prices in INR, inclusive of GST as shown.</p>
+            <nav aria-label="Policies" class="flex flex-wrap items-center justify-center md:justify-end gap-x-5 gap-y-2">
+                <a href="/legal/terms-of-service.html" target="_blank" rel="noopener noreferrer"
+                    class="text-[11px] font-bold text-[#1f271b]/50 hover:text-[#d4af37] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d4af37] rounded-sm">Terms of Service</a>
+                <a href="/legal/privacy-policy.html" target="_blank" rel="noopener noreferrer"
+                    class="text-[11px] font-bold text-[#1f271b]/50 hover:text-[#d4af37] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d4af37] rounded-sm">Privacy Policy</a>
+                <a href="/legal/shipping-policy.html" target="_blank" rel="noopener noreferrer"
+                    class="text-[11px] font-bold text-[#1f271b]/50 hover:text-[#d4af37] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d4af37] rounded-sm">Shipping Policy</a>
+                <a href="/legal/return-policy.html" target="_blank" rel="noopener noreferrer"
+                    class="text-[11px] font-bold text-[#1f271b]/50 hover:text-[#d4af37] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d4af37] rounded-sm">Returns Policy</a>
+                <a href="/legal/support-policy.html" target="_blank" rel="noopener noreferrer"
+                    class="text-[11px] font-bold text-[#1f271b]/50 hover:text-[#d4af37] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d4af37] rounded-sm">Support</a>
+                <a href="/legal/home.html" target="_blank" rel="noopener noreferrer"
+                    class="text-[11px] font-bold text-[#1f271b]/50 hover:text-[#d4af37] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d4af37] rounded-sm">Company Credentials</a>
+            </nav>
+        </div>
+    </footer>
+
+    <!-- Load order matters, as everywhere in this project, and these three are
+         a chain rather than a list:
+           product-section-shared  must precede store-overlay-shared, which
+                                   reuses its escapeHtml and bails without it
+           store-overlay-shared    must precede cart-module, which needs both
+         Getting this pair backwards is not a soft failure — storeOverlay is
+         never defined, checkout-module returns at its dependency guard, and
+         the page sits on "Loading your order..." forever.
+
+         price-format-module      formatAmount, used by the summary
+         customer-session-module  prefills the form when someone is signed in,
+                                  AND now tells cart-module whose cart it is
+                                  holding — so it must load BEFORE it. It used
+                                  to sit after, which was harmless while a cart
+                                  was one browser-wide localStorage key and is
+                                  not any more: cart-module reads
+                                  window.customerSession as it evaluates, and
+                                  the other order makes every customer a guest.
+                                  store.html has always had this pair the right
+                                  way round; this page now matches it.
+         cart-module              owns the cart: sessionStorage for a guest,
+                                  cart_items over /api/cart for a signed-in
+                                  customer. This page reads it through
+                                  window.storeCart, never storage directly, and
+                                  awaits window.storeCart.ready before pricing.
+         checkout-module          this page -->
+    <script src="/js/shared/price-format-module.js"></script>
+    <script src="/js/shared/product-section-shared-module.js"></script>
+    <script src="/js/modules/storefront/shared/store-overlay-shared-module.js"></script>
+    <script src="/js/modules/account/customer-session-module.js"></script>
+    <script src="/js/modules/cart/cart-module.js"></script>
+    <!-- payment-module            opens Razorpay; must precede checkout-module,
+                                   which calls window.storePayment on submit.
+
+         data-razorpay-checkout on <body> is NOT decoration. server.js scans
+         the project's HTML at boot for that exact attribute and grants this
+         document — and only this document — the CSP directives Razorpay's
+         checkout needs (script-src, frame-src, connect-src, img-src,
+         form-action). Same read-rather-than-write pattern as data-map-embed.
+         Remove the attribute and the grant disappears on the next restart;
+         remove the module and the attribute, and this page is back to
+         'self' for everything.
+
+         Razorpay's own checkout.js is deliberately NOT a <script> tag here.
+         payment-module injects it on the click that needs it, so a visitor who
+         opens this page and leaves has told Razorpay nothing. -->
+    <script src="/js/modules/checkout/payment-module.js"></script>
+    <script src="/js/modules/checkout/checkout-module.js"></script>
+</body>
+
+</html>

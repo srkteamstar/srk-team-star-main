@@ -1,0 +1,539 @@
+// =============================================================================
+// authz-harness.js — Phase 6 authorization matrix, against a stub database
+// =============================================================================
+//
+// server.js is loaded for real — every route, every middleware, the actual
+// requireCustomer, the actual login route. Only @supabase/supabase-js is
+// replaced, with an in-memory fake holding a handful of obviously-fictional
+// rows.
+//
+// That is the point: the live Supabase project must not be written to, and a
+// read-only probe cannot exercise the paths that matter most — a guest
+// checkout that names somebody else's email, a cart written and read back, an
+// order cancelled while the gateway says money landed. Those need writes, so
+// they get a fake database instead of a real one.
+// =============================================================================
+
+const path = require('path');
+const Module = require('module');
+const control = require('./harness-control');
+
+// ---- The stub dataset -------------------------------------------------------
+// Customers sign in with an identifier and no secret, so the fixtures need
+// none. The one row whose role is NOT 'customer' is here for a single purpose:
+// the storefront door has to refuse it, and a suite with no such row could
+// only ever prove that customers get in.
+
+const db = {
+    roles: [
+        { id: 1, role_name: 'admin' },
+        { id: 2, role_name: 'customer' }
+    ],
+    user_profiles: [
+        // role_id 1 is not the customer role. This account exists so the
+        // storefront can be seen refusing it — at the login door, and again
+        // when a guest checkout types its email into a contact form.
+        { id: 100, full_name: 'Fake Other Role', email: 'other-role@example.test', phone_number: '9000000001',
+          phone_normalized: '9000000001', company: null, role_id: 1, created_at: '2026-01-01T00:00:00Z' },
+        { id: 200, full_name: 'Fake Customer A', email: 'a@example.test', phone_number: '9000000002',
+          phone_normalized: '9000000002', company: 'A Ltd', role_id: 2, created_at: '2026-01-02T00:00:00Z' },
+        { id: 201, full_name: 'Fake Customer B', email: 'b@example.test', phone_number: '9000000003',
+          phone_normalized: '9000000003', company: 'B Ltd', role_id: 2, created_at: '2026-01-03T00:00:00Z' },
+        // No orders and no address, so a route that has to distinguish "an
+        // account with nothing filed against it" from one with history has a
+        // row of each to work with.
+        { id: 202, full_name: 'Fake Customer C', email: 'c@example.test', phone_number: '9000000005',
+          phone_normalized: '9000000005', company: null, role_id: 2, created_at: '2026-01-04T00:00:00Z' }
+    ],
+    shipping_addresses: [
+        { id: 1, user_id: 200, full_address: '1 A Street', city: 'Gohana', state: 'Haryana', country: 'India', zip_code: '131301' },
+        { id: 2, user_id: 201, full_address: '2 B Street', city: 'Sonipat', state: 'Haryana', country: 'India', zip_code: '131001' }
+    ],
+    orders: [
+        { id: 900, order_number: 900, user_id: 200, status: 'Processing', tracking: null,
+          amount: 1000, shipping_amount: 0, tax_amount: 180, net_amount: 1180, created_at: '2026-02-01T00:00:00Z' },
+        { id: 901, order_number: 901, user_id: 201, status: 'Shipped', tracking: 'TRK-B',
+          amount: 2000, shipping_amount: 0, tax_amount: 360, net_amount: 2360, created_at: '2026-02-02T00:00:00Z' }
+    ],
+    order_items: [
+        { id: 1, order_id: 900, product_id: 1, product_name: 'Fake Machine', price: 1000, quantity: 1, total_amount: 1000 },
+        { id: 2, order_id: 901, product_id: 1, product_name: 'Fake Machine', price: 1000, quantity: 2, total_amount: 2000 }
+    ],
+    order_shipping_address: [
+        { id: 1, order_id: 900, full_address: '1 A Street', city: 'Gohana', state: 'Haryana', country: 'India', zip_code: '131301' },
+        { id: 2, order_id: 901, full_address: '2 B Street', city: 'Sonipat', state: 'Haryana', country: 'India', zip_code: '131001' }
+    ],
+    // Two rows written before the picker was cut down to pay-now /
+    // pay-on-receipt, and left holding the instruments of that era on purpose.
+    // `payments.payment_method` carries no check constraint (migration 014
+    // constrains `gateway` and `status`, not this), so historic orders keep
+    // reading as what they actually were — and the customer's own order list
+    // has to go on rendering them.
+    payments: [
+        { id: 1, order_id: 900, gateway: 'offline', payment_method: 'Bank Transfer', amount: 1180,
+          amount_paise: 118000, currency: 'INR', gateway_order_id: null, transaction_id: null,
+          status: 'Pending', verified_at: null, created_at: '2026-02-01T00:00:00Z' },
+        { id: 2, order_id: 901, gateway: 'offline', payment_method: 'UPI', amount: 2360,
+          amount_paise: 236000, currency: 'INR', gateway_order_id: null, transaction_id: null,
+          status: 'Pending', verified_at: null, created_at: '2026-02-02T00:00:00Z' }
+    ],
+    // Migration 014's append-only webhook log. Empty rather than absent: the
+    // stub's insert pushes into `db[table] || []`, and an absent table means
+    // that push lands in a throwaway array and every row silently vanishes.
+    payment_events: [],
+    // Migration 017's per-customer cart. Empty for the same reason, and empty
+    // rather than seeded on purpose: section 18 proves that one customer's
+    // cart is invisible to another, and a fixture written by hand here would
+    // let that pass without PUT /api/cart having stored anything.
+    cart_items: [],
+    products: [
+        { id: 1, name: 'Fake Machine', url_slug: 'fake-machine', description: 'd', featured_description: null,
+          price: '1000', category_id: 10, asset_folder: 'Fake Machine', is_active: true,
+          is_featured: true, is_best_seller: false, is_new_arrival: false,
+          created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' },
+        { id: 2, name: 'Fake On Request', url_slug: 'fake-on-request', description: 'd', featured_description: null,
+          price: 'On request', category_id: 10, asset_folder: 'Fake On Request', is_active: true,
+          is_featured: false, is_best_seller: false, is_new_arrival: false,
+          created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }
+    ],
+    product_images: [],
+
+    // THE VIEW, not just the table. fetchProductRows() reads
+    // `products_with_image` first and only falls back to `products` when the
+    // view is genuinely MISSING — a 42P01/PGRST205 — and this stub answers an
+    // unknown table with an empty list and no error at all. So the view read
+    // "succeeded" with zero rows, the fallback never fired, and
+    // /api/products/public returned [] on a fixture holding two products.
+    //
+    // Nothing noticed, because until the browser suite could run there was
+    // nothing asking this stub for a storefront. Every product surface on the
+    // site — the sections, the search overlay, the cart, the quote picker, the
+    // details overlay — reads that one route, so the entire store was
+    // untestable and looked fine.
+    //
+    // `categories_with_image` was already here, which is why category tabs
+    // rendered and products did not.
+    //
+    // Kept in step with `products` by hand, exactly as categories_with_image
+    // is: a fixture is a fixture, and the real view's job (joining one main
+    // image per row) is what `image_url` stands in for.
+    products_with_image: [
+        { id: 1, name: 'Fake Machine', url_slug: 'fake-machine', description: 'd', featured_description: null,
+          price: '1000', category_id: 10, asset_folder: 'Fake Machine', is_active: true,
+          is_featured: true, is_best_seller: false, is_new_arrival: false, image_url: null,
+          created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' },
+        { id: 2, name: 'Fake On Request', url_slug: 'fake-on-request', description: 'd', featured_description: null,
+          price: 'On request', category_id: 10, asset_folder: 'Fake On Request', is_active: true,
+          is_featured: false, is_best_seller: false, is_new_arrival: false, image_url: null,
+          created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }
+    ],
+
+    categories: [
+        { id: 10, name: 'Machinery', url_slug: 'machinery', description: 'c', parent_id: null,
+          is_active: true, is_featured: true, image_path: null, product_count: 0, updated_at: '2026-01-01T00:00:00Z' },
+        // SPELLED THE WAY THE LIVE TREE SPELLS IT. Every footer, the About page
+        // and the home page link `#moulding`; the database says `moldings`. That
+        // one missing letter silently sent all of those links to the default
+        // tab, and this fixture is here so the catalogue's layered hash
+        // resolution is tested against the drift rather than against a tree
+        // tidied up to suit the test.
+        { id: 11, name: 'Photo Frame Moldings', url_slug: 'moldings', description: 'c', parent_id: null,
+          is_active: true, is_featured: false, image_path: null, product_count: 0, updated_at: '2026-01-01T00:00:00Z' }
+    ],
+    categories_with_image: [
+        { id: 10, name: 'Machinery', url_slug: 'machinery', description: 'c', parent_id: null,
+          is_active: true, is_featured: true, image_path: null, product_count: 0, updated_at: '2026-01-01T00:00:00Z' },
+        { id: 11, name: 'Photo Frame Moldings', url_slug: 'moldings', description: 'c', parent_id: null,
+          is_active: true, is_featured: false, image_path: null, product_count: 0, updated_at: '2026-01-01T00:00:00Z' }
+    ],
+    enquiries: [
+        { id: 500, enquiry_type_id: 1, enquirer_name: 'Fake Enquirer', enquirer_business_name: null,
+          enquirer_email: 'e@example.test', enquirer_phone_number: 9000000009,
+          enquirer_text_message: 'help', status: 'Open', created_at: '2026-03-01T00:00:00Z' }
+    ],
+    form_types: [{ id: 1, type_name: 'enquiry' }],
+    quote_requests: [
+        { id: 600, business_name: 'Fake Biz', contact_name: 'Fake Person', email: 'q@example.test',
+          phone: '9000000010', business_address: 'addr', notes: null, status: 'Open', created_at: '2026-03-02T00:00:00Z' }
+    ],
+    quote_request_items: [
+        { id: 1, quote_request_id: 600, position: 1, category_id: 10, category_name: 'Machinery',
+          product_id: 1, product_name: 'Fake Machine', product_price: 1000 }
+    ],
+    upcoming_projects: [
+        { id: 700, project_category_title: 'c', project_name: 'p', project_description: 'd',
+          is_visible: true, created_at: '2026-03-03T00:00:00Z' }
+    ],
+    site_settings: [{ key: 'upcoming_projects_section_visible', value: true }]
+};
+
+let nextId = 10000;
+
+// THE UNIQUE INDEXES THAT CARRY THE IDEMPOTENCY GUARANTEE.
+//
+// Migration 014 creates these in Postgres; the stub has to honour them or the
+// tests that matter most quietly pass for the wrong reason. A redelivered
+// webhook only becomes a no-op because the second insert raises 23505 — with
+// no constraint here, the stub would happily store it twice and the test
+// would prove nothing.
+//
+// Partial, matching the migration: nulls do not collide (offline payment rows
+// all carry transaction_id null and there are many of them).
+const UNIQUE_INDEXES = {
+    payment_events: ['event_id'],
+    payments: ['transaction_id']
+};
+
+// Which columns an upsert with no explicit `onConflict` resolves against.
+// PostgREST falls back to the primary key; site_settings is keyed on `key`
+// rather than on an id, and is the one caller in server.js that omits the
+// option. Everything else names its conflict target and never reaches this.
+const UPSERT_DEFAULT_KEYS = {
+    site_settings: ['key']
+};
+
+// ---- A chainable stub matching the slice of PostgREST that server.js uses ----
+function makeQuery(table) {
+    const state = { table, filters: [], op: 'select', payload: null, wantSingle: null, order: null, count: null, head: false };
+
+    const rows = () => (db[state.table] || []);
+
+    const matches = (row) => state.filters.every(f => {
+        const value = row[f.column];
+        if (f.type === 'eq') return String(value) === String(f.value);
+        if (f.type === 'in') return f.value.map(String).includes(String(value));
+        return true;
+    });
+
+    const q = {
+        // PostgREST's second argument: { count: 'exact', head: true } asks for
+        // the number of matching rows without shipping any of them back. The
+        // stub has to honour it or the route that counts a customer's orders
+        // before deleting them reads `count` as undefined and concludes there
+        // are none, which is exactly the check being tested.
+        // EMBEDDED RESOURCES ARE PARSED, not ignored.
+        //
+        // This used to drop `columns` on the floor entirely, which is fine for
+        // a plain column list and silently wrong for PostgREST's embed syntax:
+        // `select('*, quote_request_items (*)')` came back as bare
+        // quote_requests rows with no items on them at all. The route reads
+        // `row.quote_request_items || []`, so it degraded to an empty list and
+        // reported it as a successful read.
+        //
+        // That made the quote-quantity assertion in section 12 of
+        // authz.test.js a test of nothing — it indexed into the empty array
+        // the stub had handed back. The suite crashed on it rather than
+        // failing cleanly, which is the only reason it was noticed at all.
+        //
+        // Same rule the unique-index emulation follows: the guarantee under
+        // test IS the embed, so a stub that cannot express one cannot test it.
+        select(columns, options) {
+            if (options && options.count) state.count = options.count;
+            if (options && options.head) state.head = true;
+
+            // `name (*)` / `name(*)` — the embedded-resource form. Plain
+            // column names carry no parentheses and are still ignored, which
+            // is what every other caller here expects.
+            if (typeof columns === 'string' && columns.indexOf('(') !== -1) {
+                const embeds = [];
+                const pattern = /([a-z_][a-z0-9_]*)\s*\(/gi;
+                let match;
+                while ((match = pattern.exec(columns)) !== null) embeds.push(match[1]);
+                state.embeds = embeds;
+            }
+
+            return q;
+        },
+        eq(column, value) { state.filters.push({ type: 'eq', column, value }); return q; },
+        in(column, value) { state.filters.push({ type: 'in', column, value }); return q; },
+        order(column, options) { state.order = { column, asc: !options || options.ascending !== false }; return q; },
+        limit() { return q; },
+        insert(payload) { state.op = 'insert'; state.payload = payload; return q; },
+        update(payload) { state.op = 'update'; state.payload = payload; return q; },
+        upsert(payload, options) {
+            state.op = 'upsert';
+            state.payload = payload;
+            state.onConflict = options && options.onConflict;
+            return q;
+        },
+        delete() { state.op = 'delete'; return q; },
+        maybeSingle() { state.wantSingle = 'maybe'; return q.then(); },
+        single() { state.wantSingle = 'one'; return q.then(); },
+        then(resolve, reject) { return run().then(resolve, reject); }
+    };
+
+    async function run() {
+        try {
+            let data;
+
+            if (state.op === 'select') {
+                data = rows().filter(matches).map(r => Object.assign({}, r));
+
+                // One level of embedding, joined the way the real schema is:
+                // the child carries `<singular parent>_id`. quote_requests ->
+                // quote_request_items.quote_request_id, which is the one
+                // embed this server actually asks for.
+                //
+                // PostgREST promises no order for an embedded resource, and
+                // the route re-sorts them itself for exactly that reason — so
+                // nothing is sorted here, deliberately. Ordering them would
+                // hide a regression in the route's own sort.
+                (state.embeds || []).forEach(name => {
+                    const child = db[name];
+                    if (!Array.isArray(child)) return;
+
+                    const foreignKey = state.table.replace(/s$/, '') + '_id';
+                    data.forEach(row => {
+                        row[name] = child
+                            .filter(item => String(item[foreignKey]) === String(row.id))
+                            .map(item => Object.assign({}, item));
+                    });
+                });
+
+                if (state.order) {
+                    const { column, asc } = state.order;
+                    data.sort((a, b) => (a[column] > b[column] ? 1 : a[column] < b[column] ? -1 : 0) * (asc ? 1 : -1));
+                }
+            } else if (state.op === 'insert') {
+                const list = Array.isArray(state.payload) ? state.payload : [state.payload];
+                const unique = UNIQUE_INDEXES[state.table] || [];
+
+                for (const item of list) {
+                    for (const column of unique) {
+                        const value = item[column];
+                        if (value === null || value === undefined) continue;
+                        if (rows().some(row => String(row[column]) === String(value))) {
+                            return { data: null, error: { code: '23505', message: `duplicate key value violates unique constraint on ${state.table}.${column}` } };
+                        }
+                    }
+                }
+
+                data = list.map(item => {
+                    const row = Object.assign({ id: ++nextId, created_at: new Date().toISOString() }, item);
+                    if (state.table === 'orders' && row.order_number === undefined) row.order_number = row.id;
+                    rows().push(row);
+                    return Object.assign({}, row);
+                });
+            } else if (state.op === 'update') {
+                const hit = rows().filter(matches);
+                hit.forEach(row => Object.assign(row, state.payload));
+                data = hit.map(r => Object.assign({}, r));
+            } else if (state.op === 'upsert') {
+                // Split out from `update`, which it used to share. Sharing was
+                // wrong in a way nothing had happened to notice: an upsert
+                // carries no .eq() filters, so `matches` was true for every
+                // row in the table and the payload was assigned over all of
+                // them. PUT /api/cart is the first caller whose correctness
+                // depends on the difference — it upserts a customer's lines
+                // against (user_id, product_id), and the old branch would
+                // have rewritten every other customer's cart to match, which
+                // is the exact bug section 18 exists to catch.
+                const list = Array.isArray(state.payload) ? state.payload : [state.payload];
+                const keys = (state.onConflict
+                    ? String(state.onConflict).split(',').map(part => part.trim()).filter(Boolean)
+                    : (UPSERT_DEFAULT_KEYS[state.table] || []));
+
+                data = list.map(item => {
+                    const existing = keys.length
+                        ? rows().find(row => keys.every(key => String(row[key]) === String(item[key])))
+                        : null;
+
+                    if (existing) {
+                        Object.assign(existing, item);
+                        return Object.assign({}, existing);
+                    }
+
+                    const row = Object.assign({ id: ++nextId, created_at: new Date().toISOString() }, item);
+                    rows().push(row);
+                    return Object.assign({}, row);
+                });
+            } else if (state.op === 'delete') {
+                const keep = rows().filter(r => !matches(r));
+                const removed = rows().filter(matches).map(r => Object.assign({}, r));
+                db[state.table] = keep;
+                data = removed;
+            }
+
+            if (state.count) {
+                const total = Array.isArray(data) ? data.length : 0;
+                return { data: state.head ? null : data, count: total, error: null };
+            }
+
+            if (state.wantSingle === 'maybe') return { data: data[0] || null, error: null };
+            if (state.wantSingle === 'one') {
+                if (!data.length) return { data: null, error: { code: 'PGRST116', message: 'no rows' } };
+                return { data: data[0], error: null };
+            }
+            return { data, error: null };
+        } catch (error) {
+            return { data: null, error: { message: String(error) } };
+        }
+    }
+
+    return q;
+}
+
+const fakeSupabase = {
+    from: (table) => makeQuery(table),
+    rpc: async (name, args) => {
+        if (name !== 'create_store_order') return { data: null, error: { message: `unstubbed RPC: ${name}` } };
+        if (control.consumeAtomicCheckoutFailure()) {
+            return { data: null, error: { message: 'forced atomic checkout failure' } };
+        }
+
+        const order = Object.assign({
+            id: ++nextId,
+            order_number: nextId,
+            user_id: args.p_user_id,
+            created_at: new Date().toISOString()
+        }, args.p_order);
+        const items = (args.p_items || []).map(item => Object.assign({ id: ++nextId, order_id: order.id }, item));
+        const shipping = Object.assign({ id: ++nextId, order_id: order.id }, args.p_shipping);
+        const payment = Object.assign({ id: ++nextId, order_id: order.id, created_at: new Date().toISOString() }, args.p_payment);
+
+        db.orders.push(order);
+        db.order_items.push(...items);
+        db.order_shipping_address.push(shipping);
+        db.payments.push(payment);
+        return { data: { order: Object.assign({}, order), payment: Object.assign({}, payment) }, error: null };
+    },
+    storage: { from: () => ({ upload: async () => ({ error: null }), remove: async () => ({ error: null }) }) }
+};
+
+// ---- Intercept the supabase module before server.js requires it -------------
+const realResolve = Module._resolveFilename;
+Module._resolveFilename = function (request, ...rest) {
+    if (request === '@supabase/supabase-js') return '\0fake-supabase';
+    return realResolve.call(this, request, ...rest);
+};
+require.cache['\0fake-supabase'] = {
+    id: '\0fake-supabase', filename: '\0fake-supabase', loaded: true,
+    exports: { createClient: () => fakeSupabase }
+};
+
+// ---- The stub gateway -------------------------------------------------------
+//
+// src/razorpay.js talks to Razorpay with global fetch, so replacing fetch is
+// the same move the Supabase stub makes: intercept the boundary, leave the
+// code under test untouched. No network call leaves this process.
+//
+// WHAT THE FAKE GATEWAY REPORTS IS ENCODED IN THE PAYMENT ID.
+//
+//     pay_<status>_<amountPaise>_<gatewayOrderId>
+//
+// so a test can ask for "captured, but 100 paise" or "authorised, not
+// captured" without a control channel between the two processes — the test
+// simply names the payment it wants when it posts the callback. Every branch
+// of markOrderPaid()'s four conditions is reachable this way.
+const RAZORPAY_KEY_SECRET = 'harness-razorpay-key-secret';
+const RAZORPAY_WEBHOOK_SECRET = 'harness-razorpay-webhook-secret';
+
+let gatewayOrderSeq = 0;
+
+// Gateway orders the fake Razorpay should report money against.
+//
+// POST /api/orders/:id/cancel asks the gateway `amount_paid` before cancelling,
+// because our own payments row is only as current as the last webhook we
+// processed and a customer can be mid-modal in another tab. That refusal is the
+// interesting branch, and it is the one gateway answer that cannot be chosen by
+// naming a payment id the way every other one here is: the gateway ORDER id is
+// minted by this stub, so a test can only point at it after the fact.
+//
+// run.js spawns the suites as separate processes from this one, so the channel
+// is a small file both sides compute the same path for. See harness-control.js
+// for why that is not over-engineering — an in-process Set here would be
+// mutated in the test's copy and read from the server's, and would silently
+// assert nothing.
+control.reset();
+
+const realFetch = globalThis.fetch;
+
+globalThis.fetch = async function (url, options) {
+    const href = String(url);
+
+    if (!href.startsWith('https://api.razorpay.com/')) {
+        return realFetch.call(this, url, options);
+    }
+
+    const json = (status, body) => new Response(JSON.stringify(body), {
+        status,
+        headers: { 'Content-Type': 'application/json' }
+    });
+
+    // Create an order.
+    if (href.endsWith('/v1/orders') && (options || {}).method === 'POST') {
+        const sent = JSON.parse(options.body);
+        gatewayOrderSeq += 1;
+        return json(200, {
+            id: `order_HARNESS${gatewayOrderSeq}`,
+            amount: sent.amount,
+            currency: sent.currency,
+            receipt: sent.receipt,
+            notes: sent.notes,
+            status: 'created'
+        });
+    }
+
+    // Read an order back. Only `status` and `amount_paid` are read by the
+    // cancel route, but the shape is Razorpay's so a future caller reading
+    // more does not silently get undefined.
+    const orderMatch = href.match(/\/v1\/orders\/([^/?]+)$/);
+    if (orderMatch && (options || {}).method !== 'POST') {
+        const id = decodeURIComponent(orderMatch[1]);
+        const paid = control.paidOrders().includes(id);
+        return json(200, {
+            id: id,
+            entity: 'order',
+            amount: 0,
+            amount_paid: paid ? 1 : 0,
+            amount_due: 0,
+            currency: 'INR',
+            status: paid ? 'paid' : 'created'
+        });
+    }
+
+    // Read a payment back.
+    const paymentMatch = href.match(/\/v1\/payments\/([^/?]+)$/);
+    if (paymentMatch) {
+        const id = decodeURIComponent(paymentMatch[1]);
+        const parts = id.split('_');
+        // pay _ status _ amount _ order _ HARNESSn   -> the order id itself
+        // contains an underscore, so the tail is rejoined rather than indexed.
+        if (parts.length < 4 || parts[0] !== 'pay') {
+            return json(400, { error: { code: 'BAD_REQUEST_ERROR', description: 'no such payment' } });
+        }
+        return json(200, {
+            id: id,
+            status: parts[1],
+            amount: Number(parts[2]),
+            currency: 'INR',
+            order_id: parts.slice(3).join('_'),
+            method: 'upi'
+        });
+    }
+
+    return json(404, { error: { code: 'NOT_FOUND', description: 'unstubbed razorpay path: ' + href } });
+};
+
+process.env.PORT = process.env.HARNESS_PORT || '3456';
+process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'https://fake.supabase.co';
+process.env.SUPABASE_SERVICE_ROLE_KEY = 'fake-service-role-key';
+process.env.SESSION_SECRET = 'harness-session-secret-that-is-long-enough-32';
+// On by default, because the payments suite is the reason this harness knows
+// about Razorpay at all. HARNESS_PAYMENTS_OFF boots the other configuration —
+// the one this deployment runs today — so the offline flow can be proved
+// unchanged rather than assumed to be.
+if (process.env.HARNESS_PAYMENTS_OFF) delete process.env.PAYMENTS_ENABLED;
+else process.env.PAYMENTS_ENABLED = '1';
+process.env.RAZORPAY_KEY_ID = 'rzp_test_harness';
+process.env.RAZORPAY_KEY_SECRET = RAZORPAY_KEY_SECRET;
+process.env.RAZORPAY_WEBHOOK_SECRET = RAZORPAY_WEBHOOK_SECRET;
+delete process.env.NODE_ENV;   // assertBootConfig refuses a test key under production
+delete process.env.TRUST_PROXY;
+delete process.env.ALLOWED_ORIGINS;
+
+// The real file, not a copy — a copied server.js is a test that
+// silently stops testing the thing it names.
+require(path.join(__dirname, '..', 'server.js'));
+
+module.exports = { db, RAZORPAY_KEY_SECRET, RAZORPAY_WEBHOOK_SECRET };

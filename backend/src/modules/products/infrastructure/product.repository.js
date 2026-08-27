@@ -1,0 +1,169 @@
+/*
+ * modules/products/infrastructure/product.repository.js
+ * ============================================================================
+ *
+ * Every read of the products table that more than one place needs, in one
+ * file. Two of these are this module's own; two are READ PORTS other modules
+ * hold through products.public.js and must never bypass:
+ *
+ *   countProductsByCategory   modules/categories, to derive the Products
+ *                             column it stopped storing when 006 dropped it
+ *   findActiveProductsByIds   modules/checkout, which prices an order from
+ *                             the catalogue and must never take a price from
+ *                             a request body
+ *
+ * countProductsByCategory reads products and lived in the CATEGORIES section
+ * of the old server.js purely because that is where its caller was. It belongs
+ * here: a module that owns a table owns the queries against it, and the module
+ * that needs a number asks for the number.
+ */
+const { supabase } = require('../../../core/database/supabase');
+const { isMissingRelation, isPermissionDenied } = require('../../../core/database/postgrest-errors');
+
+const PRODUCT_BUCKET = 'product-images';
+
+// How many products sit in each category, counted from the products table
+// itself. `product_count` used to be a number the admin typed into the drawer and
+// it drifted the moment anyone added a product; it is derived on every read now,
+// so the column is never trusted (and 006 drops it).
+//
+// One query for the whole list, not one per category. A products table that
+// isn't provisioned yet is not an error — every category simply counts zero.
+async function countProductsByCategory() {
+    const counts = new Map();
+
+    const { data, error } = await supabase.from('products').select('category_id');
+    if (error) {
+        if (isMissingRelation(error) || isPermissionDenied(error)) return counts;
+        throw error;
+    }
+
+    (data || []).forEach(product => {
+        if (product.category_id === null || product.category_id === undefined) return;
+        const key = String(product.category_id);
+        counts.set(key, (counts.get(key) || 0) + 1);
+    });
+
+    return counts;
+}
+
+// Reads categories together with their cover image and their live product count.
+// Preferred path is the categories_with_image view from the migration, which
+// knows whether the object actually exists. If the migration hasn't been run the
+// view is missing, so fall back to the bare table and assume `<id>-cover` —
+
+// Reads products together with their grouped images, mirroring fetchCategoryRows().
+// Preferred path is the products_with_image view, which aggregates every image in
+// one query and carries the joined category name. Without it, fall back to the
+// bare table and resolve categories and images with two extra queries — still a
+// fixed cost, never per-product.
+async function fetchProductRows() {
+    const fromView = await supabase
+        .from('products_with_image')
+        .select('*')
+        .order('name', { ascending: true });
+
+    if (!fromView.error) return fromView.data || [];
+
+    // Only a missing view justifies the fallback — a real error must surface.
+    if (!isMissingRelation(fromView.error)) throw fromView.error;
+
+    const fromTable = await supabase
+        .from('products')
+        .select('*')
+        .order('name', { ascending: true });
+
+    if (fromTable.error) throw fromTable.error;
+
+    const rows = fromTable.data || [];
+    const categoryNames = new Map();
+
+    // Best-effort: a missing/unreadable categories table just means no label.
+    if (rows.some(product => product.category_id)) {
+        const { data, error } = await supabase.from('categories').select('id, name');
+        if (!error) (data || []).forEach(category => categoryNames.set(String(category.id), category.name));
+    }
+
+    // Same shape the view produces, assembled in one query and grouped in JS.
+    const imagesByProduct = new Map();
+    if (rows.length) {
+        const { data, error } = await supabase
+            .from('product_images')
+            .select('product_id, slot, is_main, updated_at')
+            .in('product_id', rows.map(product => product.id));
+
+        if (!error) {
+            (data || []).forEach(image => {
+                const list = imagesByProduct.get(String(image.product_id)) || [];
+                list.push({
+                    slot: image.slot,
+                    is_main: image.is_main,
+                    path: `${image.product_id}/${image.slot}`,
+                    updated_at: image.updated_at
+                });
+                imagesByProduct.set(String(image.product_id), list);
+            });
+            imagesByProduct.forEach(list => list.sort((a, b) => a.slot - b.slot));
+        }
+    }
+
+    return rows.map(product => ({
+        ...product,
+        category_name: product.category_id ? (categoryNames.get(String(product.category_id)) || null) : null,
+        images: imagesByProduct.get(String(product.id)) || []
+    }));
+}
+
+// Turns the raw `images` payload into public URLs, and lifts the main image to
+// `image_url` so the admin table row and the storefront card can stay simple.
+//
+// ?v=<timestamp> is per image, so replacing slot 3 does not bust the cache on
+// the other three.
+function withProductImages(product) {
+    const baseUrl = `${process.env.SUPABASE_URL}/storage/v1/object/public/${PRODUCT_BUCKET}/`;
+    const raw = Array.isArray(product.images) ? product.images : [];
+
+    const images = raw
+        .slice()
+        .sort((a, b) => a.slot - b.slot)
+        .map(image => ({
+            slot: image.slot,
+            is_main: image.is_main === true,
+            url: `${baseUrl}${image.path}?v=${new Date(image.updated_at || product.updated_at || Date.now()).getTime()}`
+        }));
+
+    // A product whose main flag never got set still needs a thumbnail, so the
+    // lowest slot stands in rather than the row rendering blank.
+    const main = images.find(image => image.is_main) || images[0] || null;
+
+    return {
+        ...product,
+        images,
+        main_slot: main ? main.slot : null,
+        image_url: main ? main.url : null
+    };
+}
+
+/**
+ * The catalogue rows a checkout is priced from - id, name, price and whether
+ * the product is still published, for a known set of ids.
+ *
+ * Returns Supabase's own { data, error } rather than throwing, because the
+ * caller distinguishes "the query failed" (a 500) from "a product is missing
+ * or withdrawn" (a refusal naming the product), and flattening the two would
+ * lose that.
+ */
+function findActiveProductsByIds(ids) {
+    return supabase
+        .from('products')
+        .select('id, name, price, is_active')
+        .in('id', ids);
+}
+
+module.exports = {
+    PRODUCT_BUCKET,
+    countProductsByCategory,
+    fetchProductRows,
+    withProductImages,
+    findActiveProductsByIds
+};

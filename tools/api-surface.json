@@ -1,0 +1,45 @@
+{
+  "_comment": [
+    "THE ROUTE TABLE THIS APPLICATION SERVES, WRITTEN DOWN SO A MOVE OR A RENAME",
+    "CANNOT QUIETLY LOSE ONE.",
+    "",
+    "tools/verify-boot.js assembles the real application and compares what it",
+    "actually exposes against this list, in BOTH directions: a route that went",
+    "missing fails, and so does one that appeared. The second half matters as",
+    "much as the first - nothing says 'a module was registered twice', 'a path",
+    "drifted by a character' or 'somebody added a route without saying so' as",
+    "clearly as an unexpected entry.",
+    "",
+    "TWO ENTRIES ARE NOT LITERAL PATHS AND ARE LISTED SEPARATELY BELOW. The",
+    "legal shell answers a REGEX rather than a literal path, and the health",
+    "probes are not under /api."
+  ],
+  "routes": [
+    "GET /",
+    "GET /api/auth/me",
+    "GET /api/cart",
+    "GET /api/categories/public",
+    "GET /api/orders/mine",
+    "GET /api/products/public",
+    "GET /api/projects/public",
+    "PATCH /api/auth/me",
+    "POST /api/auth/login",
+    "POST /api/auth/logout",
+    "POST /api/auth/register",
+    "POST /api/checkout",
+    "POST /api/checkout/summary",
+    "POST /api/orders/:id/cancel",
+    "POST /api/payments/verify",
+    "POST /api/quote-requests",
+    "POST /api/submit-form",
+    "POST /api/webhooks/razorpay",
+    "PUT /api/cart"
+  ],
+  "non_literal": {
+    "GET /legal/<policy>.html": "a regex route in modules/legal, answering six URLs from one template. Its six concrete paths are asserted by test/browser/journeys.spec.js, and listed in core/config/static-mounts.js as ROUTED_URLS so tools/verify-links.js knows they are real."
+  },
+  "operational": [
+    "GET /health/live",
+    "GET /health/ready"
+  ]
+}

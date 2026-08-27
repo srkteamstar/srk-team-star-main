@@ -1,0 +1,39 @@
+{
+  "name": "backend",
+  "version": "1.0.0",
+  "description": "SRK Team Star API and static host - modular monolith (see ../ARCHITECTURE.md).",
+  "main": "server.js",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.112.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.6.2",
+    "express-session": "^1.19.0",
+    "multer": "^2.2.0"
+  },
+  "scripts": {
+    "test": "node test/run.js",
+    "test:browser": "playwright test",
+    "reconcile": "node scripts/reconcile.js",
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "reconcile:scheduled": "node scripts/reconcile-scheduled.js",
+    "reconcile:schedule-install": "powershell -ExecutionPolicy Bypass -File scripts/schedule-reconcile.ps1",
+    "build:css": "tailwindcss -c tailwind.config.js -i styles/tailwind.input.css -o ../frontend/assets/vendor/tailwind.build.css --minify",
+    "watch:css": "tailwindcss -c tailwind.config.js -i styles/tailwind.input.css -o ../frontend/assets/vendor/tailwind.build.css --watch",
+    "test:all": "npm run verify && npm test && npm run test:browser",
+    "verify": "node ../tools/verify.js",
+    "verify:links": "node ../tools/verify-links.js",
+    "verify:boundaries": "node ../tools/verify-boundaries.js",
+    "verify:boot": "node ../tools/verify-boot.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "tailwindcss": "^3.4.17"
+  }
+}
