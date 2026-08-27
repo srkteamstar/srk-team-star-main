@@ -162,7 +162,7 @@ test('Landing hero keeps every Machinery product in the mobile gallery flow', as
 
     const actionBox = await hero.locator('a').last().boundingBox();
     const galleryBox = await gallery.boundingBox();
-    expect(actionBox && galleryBox && galleryBox.y > actionBox.y + actionBox.height).toBeTruthy();
+    expect(actionBox && galleryBox && galleryBox.y + galleryBox.height < actionBox.y).toBeTruthy();
 
     const sources = await images.evaluateAll(nodes => nodes.map(node => node.src));
     expect(sources.some(source => source.includes('ff0000'))).toBeFalsy();
@@ -174,38 +174,36 @@ test('Landing hero keeps every Machinery product in the mobile gallery flow', as
     await expect.poll(() => active.getAttribute('src'), { timeout: 4000 }).not.toBe(firstSource);
 });
 
-test('Store hero keeps every Machinery product in the mobile gallery flow', async ({ page }) => {
+test('Store featured slideshow keeps its carousel and wraps the image on mobile', async ({ page }) => {
     const image = colour => `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='90'%3E%3Crect width='120' height='90' fill='%23${colour}'/%3E%3C/svg%3E`;
     const products = [
-        { id: 1, name: 'Main Machinery One', category_id: 10, category_name: 'Machinery', images: [{ slot: 1, is_main: true, url: image('d4af37') }] },
-        { id: 2, name: 'Nested Machinery Two', category_id: 12, category_name: 'Underpinners', images: [{ slot: 1, is_main: true, url: image('f1f5f9') }] },
-        { id: 3, name: 'Not Machinery', category_id: 11, category_name: 'Mouldings', images: [{ slot: 1, is_main: true, url: image('00ff00') }] },
-        { id: 4, name: 'Legacy Machinery', category_id: 10, category_name: 'Machinery', images: [{ slot: 1, is_main: false, url: image('ff0000') }], image_url: image('0000ff') }
-    ];
-    const categories = [
-        { id: 10, name: 'Machinery', url_slug: 'machinery', parent_id: null },
-        { id: 12, name: 'Underpinners', url_slug: 'underpinners', parent_id: 10 },
-        { id: 11, name: 'Mouldings', url_slug: 'mouldings', parent_id: null }
+        { id: 1, name: 'Featured One', is_featured: true, featured_description: 'First featured machine.', image_url: image('d4af37') },
+        { id: 2, name: 'Featured Two', is_featured: true, featured_description: 'Second featured machine.', image_url: image('f1f5f9') },
+        { id: 3, name: 'Not Featured', is_featured: false, image_url: image('00ff00') }
     ];
 
     await page.route('**/api/products/public', route => route.fulfill({ json: products }));
-    await page.route('**/api/categories/public', route => route.fulfill({ json: categories }));
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto('/store/store.html', { waitUntil: 'domcontentloaded' });
 
-    const hero = page.locator('[data-machinery-hero]');
-    const gallery = hero.locator('[data-machinery-hero-media]');
-    const images = gallery.locator('[data-machinery-hero-image]');
-    await expect(hero).toHaveCSS('background-color', 'rgb(18, 23, 15)');
-    await expect(gallery).toBeVisible();
-    await expect(images).toHaveCount(3);
-    const slideIds = await gallery.locator('[data-machinery-hero-slide]')
-        .evaluateAll(nodes => nodes.map(node => node.getAttribute('data-product-id')).sort());
-    expect(slideIds).toEqual(['1', '2', '4']);
+    const hero = page.locator('#featured-hero');
+    await expect(hero).toHaveAttribute('aria-roledescription', 'carousel');
+    await expect(hero.locator('[data-machinery-hero]')).toHaveCount(0);
+    await expect(hero.locator('[data-hero-track] article')).toHaveCount(4); // two real slides + two edge clones
+    await expect(hero.locator('[data-hero-track] img')).toHaveCount(4);
 
-    const actionBox = await hero.locator('a').last().boundingBox();
-    const galleryBox = await gallery.boundingBox();
-    expect(actionBox && galleryBox && galleryBox.y > actionBox.y + actionBox.height).toBeTruthy();
+    const slideIds = await hero.locator('[data-hero-track] article h2').allTextContents();
+    expect(slideIds).toEqual(['Featured Two', 'Featured One', 'Featured Two', 'Featured One']);
+
+    const layout = await hero.locator('[data-hero-track] article').nth(1).locator('div.relative.z-10').getAttribute('class');
+    expect(layout).toContain('flex-wrap');
+    const mediaClass = await hero.locator('[data-hero-track] article').nth(1).locator('div.relative.z-10 > div').nth(0).getAttribute('class');
+    expect(mediaClass).toContain('w-full');
+    expect(mediaClass).not.toContain('hidden');
+    const mediaBox = await hero.locator('[data-hero-track] article').nth(1).locator('div.relative.z-10 > div').nth(0).boundingBox();
+    const detailsBox = await hero.locator('[data-hero-track] article').nth(1).locator('div.relative.z-10 > div').nth(1).boundingBox();
+    expect(mediaBox && detailsBox && mediaBox.y < detailsBox.y).toBeTruthy();
+    expect(await hero.locator('[data-hero-next]')).toBeVisible();
 });
 
 test('Landing navbar crossfades from the light AVIF logo to the current solid-header logo', async ({ page }) => {
