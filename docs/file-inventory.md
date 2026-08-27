@@ -47,7 +47,6 @@ have made every one of those references a small lie for no gain.
 | `hero-text-animation-module.js` | `public/js/legacy/hero-text-animation-module.js` | `legacy` |
 | `image-slider-module.js` | `public/js/modules/marketing/image-slider-module.js` | `modules/marketing` |
 | `legal-progress-bar-nav-col.js` | `public/js/modules/legal/legal-progress-bar-nav-col.js` | `modules/legal` |
-| `map-consent-module.js` | `public/js/platform/map-consent-module.js` | `platform` |
 | `my-orders-module.js` | `public/js/modules/account/my-orders-module.js` | `modules/account` |
 | `new-arrivals-section-loader.js` | `public/js/modules/storefront/sections/new-arrivals-section-loader.js` | `modules/storefront` |
 | `orders.js` | **moved to the administration console** *(separate repository)* | — |

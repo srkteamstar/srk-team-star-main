@@ -23,11 +23,12 @@
    served and updated by Razorpay, and card details being entered inside their
    iframe rather than this origin is what keeps this site out of PCI scope.
 
-   So it is a genuine exception — and it is confined the same way the Google map
-   is, by map-consent-module.js. The <script> tag is NOT in the served markup.
-   It is injected by the first payment attempt. A visitor who opens the checkout
-   page and leaves, or who never gets as far as paying, has told Razorpay
-   nothing. Before that click nothing leaves this origin.
+   So it is a genuine exception — and it is confined to the checkout page by
+   the same per-document CSP scan that grants the embedded Google map. The
+   <script> tag is NOT in the served markup. It is injected by the first
+   payment attempt. A visitor who opens the checkout page and leaves, or who
+   never gets as far as paying, has told Razorpay nothing. Before that click
+   nothing leaves this origin.
 
    The server grants Razorpay's CSP directives on this page only, and works out
    which page that is by reading the HTML for `data-razorpay-checkout` — the

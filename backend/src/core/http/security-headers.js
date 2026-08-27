@@ -86,16 +86,16 @@ const CSP_BASE = [
 // FRAME-SRC IS GRANTED PER DOCUMENT, AND THE LIST IS READ, NOT WRITTEN.
 //
 // Nine pages carry a Google map — catalogue, store, index and all six legal
-// pages. It no longer loads on sight: the served markup holds a placeholder
-// and the <iframe> is built only by the click that asks for it
-// (map-consent-module.js). Until then nothing leaves this origin.
+// pages. The iframe is part of the page markup so the map is visible as soon
+// as the section renders. The data-map-embed marker keeps the frame-src grant
+// tied to documents that actually include a map.
 //
-// The click still needs frame-src on that document, and a hand-written list
+// The embedded frame still needs frame-src on that document, and a hand-written list
 // of nine paths is a list that goes stale the first time somebody adds or
 // removes a map — silently, and in the direction that breaks the feature or
 // over-grants the policy. So the pages are found by looking: one pass over
 // the project's HTML at boot, matching the same data-map-embed attribute the
-// module itself binds to. Adding a map to a page grants that page frame-src
+// marker itself. Adding a map to a page grants that page frame-src
 // on the next restart; removing one revokes it. There is nothing to keep in
 // sync because there is nothing written down twice.
 // Two policies are now granted per document by exactly this method — the map
@@ -146,9 +146,9 @@ function htmlPagesContaining(marker) {
 
     // The legal shell is one template served at six URLs, so it is scanned
     // once and its grant is spread across the paths the route answers on.
-    // Without this the policy pages would carry a map placeholder that could
-    // never load, which is the failure mode this scan exists to prevent —
-    // just moved from "a page nobody listed" to "a page with no file".
+    // Without this the policy pages could carry a map that could never load,
+    // which is the failure mode this scan exists to prevent — just moved from
+    // "a page nobody listed" to "a page with no file".
     try {
         if (fs.readFileSync(paths.LEGAL_SHELL_HTML, 'utf8').includes(marker)) {
             ROUTED_URLS.filter(url => url.startsWith('/legal/')).forEach(url => pages.add(url));
@@ -166,7 +166,7 @@ function htmlPagesContaining(marker) {
 
 const MAP_FRAME_PAGES = (() => {
     const pages = htmlPagesContaining('data-map-embed');
-    console.log(`CSP: frame-src granted to Google Maps on ${pages.size} page(s) carrying a consent placeholder.`);
+    console.log(`CSP: frame-src granted to Google Maps on ${pages.size} page(s) carrying an embedded map.`);
     return pages;
 })();
 

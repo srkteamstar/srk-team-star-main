@@ -114,6 +114,17 @@ test('Store home drops the Best Sellers row when nothing is flagged', async ({ p
     await expect(page.locator('#best-sellers-preview')).toHaveCount(0);
 });
 
+test('Map embeds render directly without a consent prompt', async ({ page }) => {
+    for (const route of ['/', '/catalogue.html', '/store/store.html', '/legal/privacy-policy.html']) {
+        await page.goto(route, { waitUntil: 'domcontentloaded' });
+
+        const map = page.locator('[data-map-embed]');
+        await expect(map).toHaveCount(1);
+        await expect(map).toHaveAttribute('src', /^https:\/\/maps\.google\.com\/maps\?q=/);
+        await expect(page.locator('[data-map-load]')).toHaveCount(0);
+    }
+});
+
 test('Landing hero keeps every Machinery product in the mobile gallery flow', async ({ page }) => {
     const image = colour => `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='90'%3E%3Crect width='120' height='90' fill='%23${colour}'/%3E%3C/svg%3E`;
     const products = [
@@ -203,6 +214,9 @@ test('Store featured slideshow keeps its carousel and wraps the image on mobile'
     const mediaBox = await hero.locator('[data-hero-track] article').nth(1).locator('div.relative.z-10 > div').nth(0).boundingBox();
     const detailsBox = await hero.locator('[data-hero-track] article').nth(1).locator('div.relative.z-10 > div').nth(1).boundingBox();
     expect(mediaBox && detailsBox && mediaBox.y < detailsBox.y).toBeTruthy();
+    const ctaBox = await hero.locator('[data-hero-track] article').nth(1).locator('[data-hero-cta]').boundingBox();
+    const heroBox = await hero.boundingBox();
+    expect(ctaBox && heroBox && ctaBox.y + ctaBox.height <= heroBox.y + heroBox.height - 16).toBeTruthy();
     expect(await hero.locator('[data-hero-next]')).toBeVisible();
 });
 

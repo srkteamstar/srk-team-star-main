@@ -210,19 +210,13 @@
                         <h4 class="text-xl font-bold text-white">Our Manufacturing Plant</h4>
                         <div
                             class="w-full aspect-video bg-white/5 rounded-md overflow-hidden relative border border-white/10">
-                            <div data-map-embed
-                                data-map-src="https://maps.google.com/maps?q=Malik%20Studio,%20near%20Fowara%20Chowk,%20Gohana,%20Haryana%20131301&t=&z=13&ie=UTF8&iwloc=&output=embed"
-                                data-map-title="SRK Team Star Location"
-                                class="absolute inset-0 w-full h-full flex flex-col items-center justify-center gap-3 text-center px-6 bg-[#12170f]">
-                                <svg class="w-8 h-8 stroke-[#d4af37]" fill="none" viewBox="0 0 24 24" aria-hidden="true">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
-                                        d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                                    <circle cx="12" cy="11" r="2.5" stroke-width="1.5" />
-                                </svg>
-                                <p class="text-white/70 text-sm max-w-xs">Our plant on Google Maps. Loading it shares your IP address with Google.</p>
-                                <button type="button" data-map-load
-                                    class="mt-1 px-5 py-2 rounded-sm border border-[#d4af37] text-[#d4af37] text-xs font-bold uppercase tracking-widest hover:bg-[#d4af37] hover:text-[#12170f] transition-colors duration-300">Load the map</button>
-                            </div>
+                            <iframe data-map-embed
+                                src="https://maps.google.com/maps?q=Malik%20Studio,%20near%20Fowara%20Chowk,%20Gohana,%20Haryana%20131301&t=&z=13&ie=UTF8&iwloc=&output=embed"
+                                title="SRK Team Star Location"
+                                class="absolute inset-0 w-full h-full border-0 grayscale opacity-90 hover:grayscale-0 hover:opacity-100 transition-all duration-500"
+                                loading="lazy" referrerpolicy="no-referrer"
+                                sandbox="allow-scripts allow-same-origin allow-popups"
+                                allow="geolocation 'none'; camera 'none'; microphone 'none'"></iframe>
                         </div>
                         <p class="text-white/60 text-sm flex items-start gap-2">
                             <svg class="w-5 h-5 shrink-0 stroke-white/60" fill="none" viewBox="0 0 24 24">
@@ -389,7 +383,6 @@
     <script src="/js/modules/catalogue/product-card-and-filter-tab-module.js"></script>
     <script src="/js/modules/enquiries/enquiry-form-module.js"></script>
     <script src="/js/platform/view-state-restore-module.js"></script>
-    <script src="/js/platform/map-consent-module.js"></script>
 </body>
 
 </html>
