@@ -26,49 +26,49 @@ have made every one of those references a small lie for no gain.
 | `#1` (served at `/<name>`) | `#2` | Layer |
 |---|---|---|
 | `admin-auth-module.js` | **moved to the administration console** *(separate repository)* | — |
-| `all-products-section-loader-module.js` | `frontend/js/modules/storefront/sections/all-products-section-loader-module.js` | `modules/storefront` |
-| `best-seller-section-loader.js` | `frontend/js/modules/storefront/sections/best-seller-section-loader.js` | `modules/storefront` |
-| `blog-filter-module.js` | `frontend/js/modules/blog/blog-filter-module.js` | `modules/blog` |
-| `cart-module.js` | `frontend/js/modules/cart/cart-module.js` | `modules/cart` |
+| `all-products-section-loader-module.js` | `public/js/modules/storefront/sections/all-products-section-loader-module.js` | `modules/storefront` |
+| `best-seller-section-loader.js` | `public/js/modules/storefront/sections/best-seller-section-loader.js` | `modules/storefront` |
+| `blog-filter-module.js` | `public/js/modules/blog/blog-filter-module.js` | `modules/blog` |
+| `cart-module.js` | `public/js/modules/cart/cart-module.js` | `modules/cart` |
 | `categories.js` | **moved to the administration console** *(separate repository)* | — |
-| `checkout-module.js` | `frontend/js/modules/checkout/checkout-module.js` | `modules/checkout` |
-| `crousel-and-data-module.js` | `frontend/js/legacy/crousel-and-data-module.js` | `legacy` |
-| `custom-select-module.js` | `frontend/js/platform/custom-select-module.js` | `platform` |
-| `customer-session-module.js` | `frontend/js/modules/account/customer-session-module.js` | `modules/account` |
+| `checkout-module.js` | `public/js/modules/checkout/checkout-module.js` | `modules/checkout` |
+| `crousel-and-data-module.js` | `public/js/legacy/crousel-and-data-module.js` | `legacy` |
+| `custom-select-module.js` | `public/js/platform/custom-select-module.js` | `platform` |
+| `customer-session-module.js` | `public/js/modules/account/customer-session-module.js` | `modules/account` |
 | `customers.js` | **moved to the administration console** *(separate repository)* | — |
 | `dashboard.js` | **moved to the administration console** *(separate repository)* | — |
-| `disable-input-suggestions-module.js` | `frontend/js/platform/disable-input-suggestions-module.js` | `platform` |
+| `disable-input-suggestions-module.js` | `public/js/platform/disable-input-suggestions-module.js` | `platform` |
 | `enquiries.js` | **moved to the administration console** *(separate repository)* | — |
-| `enquiry-form-module.js` | `frontend/js/modules/enquiries/enquiry-form-module.js` | `modules/enquiries` |
-| `featured-categories-loader.js` | `frontend/js/modules/storefront/sections/featured-categories-loader.js` | `modules/storefront` |
-| `featured-hero-loader.js` | `frontend/js/modules/storefront/sections/featured-hero-loader.js` | `modules/storefront` |
-| `featured-section-loader.js` | `frontend/js/modules/storefront/sections/featured-section-loader.js` | `modules/storefront` |
-| `general-scroll-reveal-module.js` | `frontend/js/platform/general-scroll-reveal-module.js` | `platform` |
-| `hero-text-animation-module.js` | `frontend/js/legacy/hero-text-animation-module.js` | `legacy` |
-| `image-slider-module.js` | `frontend/js/modules/marketing/image-slider-module.js` | `modules/marketing` |
-| `legal-progress-bar-nav-col.js` | `frontend/js/modules/legal/legal-progress-bar-nav-col.js` | `modules/legal` |
-| `map-consent-module.js` | `frontend/js/platform/map-consent-module.js` | `platform` |
-| `my-orders-module.js` | `frontend/js/modules/account/my-orders-module.js` | `modules/account` |
-| `new-arrivals-section-loader.js` | `frontend/js/modules/storefront/sections/new-arrivals-section-loader.js` | `modules/storefront` |
+| `enquiry-form-module.js` | `public/js/modules/enquiries/enquiry-form-module.js` | `modules/enquiries` |
+| `featured-categories-loader.js` | `public/js/modules/storefront/sections/featured-categories-loader.js` | `modules/storefront` |
+| `featured-hero-loader.js` | `public/js/modules/storefront/sections/featured-hero-loader.js` | `modules/storefront` |
+| `featured-section-loader.js` | `public/js/modules/storefront/sections/featured-section-loader.js` | `modules/storefront` |
+| `general-scroll-reveal-module.js` | `public/js/platform/general-scroll-reveal-module.js` | `platform` |
+| `hero-text-animation-module.js` | `public/js/legacy/hero-text-animation-module.js` | `legacy` |
+| `image-slider-module.js` | `public/js/modules/marketing/image-slider-module.js` | `modules/marketing` |
+| `legal-progress-bar-nav-col.js` | `public/js/modules/legal/legal-progress-bar-nav-col.js` | `modules/legal` |
+| `map-consent-module.js` | `public/js/platform/map-consent-module.js` | `platform` |
+| `my-orders-module.js` | `public/js/modules/account/my-orders-module.js` | `modules/account` |
+| `new-arrivals-section-loader.js` | `public/js/modules/storefront/sections/new-arrivals-section-loader.js` | `modules/storefront` |
 | `orders.js` | **moved to the administration console** *(separate repository)* | — |
-| `payment-module.js` | `frontend/js/modules/checkout/payment-module.js` | `modules/checkout` |
-| `policy-loader.js` | `frontend/js/modules/legal/policy-loader.js` | `modules/legal` |
-| `price-format-module.js` | `frontend/js/shared/price-format-module.js` | `shared` |
-| `product-card-and-filter-tab-module.js` | `frontend/js/modules/catalogue/product-card-and-filter-tab-module.js` | `modules/catalogue` |
-| `product-details-module.js` | `frontend/js/modules/product-details/product-details-module.js` | `modules/product-details` |
-| `product-section-shared-module.js` | `frontend/js/shared/product-section-shared-module.js` | `shared` |
+| `payment-module.js` | `public/js/modules/checkout/payment-module.js` | `modules/checkout` |
+| `policy-loader.js` | `public/js/modules/legal/policy-loader.js` | `modules/legal` |
+| `price-format-module.js` | `public/js/shared/price-format-module.js` | `shared` |
+| `product-card-and-filter-tab-module.js` | `public/js/modules/catalogue/product-card-and-filter-tab-module.js` | `modules/catalogue` |
+| `product-details-module.js` | `public/js/modules/product-details/product-details-module.js` | `modules/product-details` |
+| `product-section-shared-module.js` | `public/js/shared/product-section-shared-module.js` | `shared` |
 | `products.js` | **moved to the administration console** *(separate repository)* | — |
-| `profile-icon-loader.js` | `frontend/js/modules/account/profile-icon-loader.js` | `modules/account` |
+| `profile-icon-loader.js` | `public/js/modules/account/profile-icon-loader.js` | `modules/account` |
 | `quotations.js` | **moved to the administration console** *(separate repository)* | — |
-| `request-quote-module.js` | `frontend/js/modules/quotes/request-quote-module.js` | `modules/quotes` |
-| `responsive-navigation-module.js` | `frontend/js/platform/responsive-navigation-module.js` | `platform` |
-| `smooth-scroll-and-header-controllability-module.js` | `frontend/js/platform/smooth-scroll-and-header-controllability-module.js` | `platform` |
-| `stats-control-module.js` | `frontend/js/modules/marketing/stats-control-module.js` | `modules/marketing` |
-| `store-overlay-shared-module.js` | `frontend/js/modules/storefront/shared/store-overlay-shared-module.js` | `modules/storefront` |
-| `store-route-context-module.js` | `frontend/js/modules/storefront/shared/store-route-context-module.js` | `modules/storefront` |
-| `store-search-module.js` | `frontend/js/modules/search/store-search-module.js` | `modules/search` |
+| `request-quote-module.js` | `public/js/modules/quotes/request-quote-module.js` | `modules/quotes` |
+| `responsive-navigation-module.js` | `public/js/platform/responsive-navigation-module.js` | `platform` |
+| `smooth-scroll-and-header-controllability-module.js` | `public/js/platform/smooth-scroll-and-header-controllability-module.js` | `platform` |
+| `stats-control-module.js` | `public/js/modules/marketing/stats-control-module.js` | `modules/marketing` |
+| `store-overlay-shared-module.js` | `public/js/modules/storefront/shared/store-overlay-shared-module.js` | `modules/storefront` |
+| `store-route-context-module.js` | `public/js/modules/storefront/shared/store-route-context-module.js` | `modules/storefront` |
+| `store-search-module.js` | `public/js/modules/search/store-search-module.js` | `modules/search` |
 | `upcoming-projects.js` | **moved to the administration console** *(separate repository)* | — |
-| `view-state-restore-module.js` | `frontend/js/platform/view-state-restore-module.js` | `platform` |
+| `view-state-restore-module.js` | `public/js/platform/view-state-restore-module.js` | `platform` |
 
 **`platform/`** is loaded on every page and knows nothing about the domain —
 input hardening, the phone navigation, scroll behaviour, the custom select, the
@@ -172,9 +172,9 @@ documents is the `src` on each `<script>` tag.
 | `backend/playwright.config.js` | `backend/` - unchanged; its paths were already relative to `backend/` |
 | `backend/tailwind.config.js` | `backend/` - the six content globs became two recursive ones |
 | `backend/package.json` | `backend/` - CSS output path, plus four `verify` scripts |
-| `assets/**` (624 files) | `frontend/assets/` - byte-identical |
+| `assets/**` (624 files) | `public/assets/` - byte-identical |
 | `blog/**` (9 documents) | `frontend/pages/blog/` - script `src` attributes rewritten |
-| `robots.txt` | `frontend/public/robots.txt` |
+| `robots.txt` | `public/robots.txt` |
 | `.gitignore`, `.gitattributes` | project root - unchanged |
 
 ---
@@ -257,4 +257,3 @@ moved: both applications need them, and the copies are expected to drift.
 
 The two applications share a Supabase project and nothing else — no session, no
 cookie, no API call in either direction.
-

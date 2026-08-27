@@ -65,7 +65,7 @@ the check that catches what this structure makes possible:
 ## Where things are
 
 ```
-backend/src/                      frontend/js/
+backend/src/                      public/js/
   main.js      composition root     platform/   every page, no domain
   core/        boot-once infra      shared/     used by 2+ features
   shared/      generic, no imports  modules/    one folder per feature
@@ -98,7 +98,7 @@ constants the **running** process is using.
 
 **A new Tailwind class does not exist until `npm run build:css`.** There is
 exactly one build step and this is it. The content globs include
-`frontend/js/**/*.js` because most markup here is built in JS string literals —
+`public/js/**/*.js` because most markup here is built in JS string literals —
 and Tailwind matches literal text, so **write class names out in full**. A class
 assembled from pieces (`'bg-' + colour`) will not survive.
 
@@ -241,11 +241,11 @@ deployment turns into an outage.
   buttons are inert: no `data-product-id`, so the delegated cart listener cannot
   match them. **If you make them live, give them real product ids** — do not
   hide or regenerate the row. The home view is hand-designed and is the owner's.
-- `frontend/js/legacy/` holds two modules no page loads.
+- `public/js/legacy/` holds two modules no page loads.
 - **Product details is mouse-only.** An `<article>` is not focusable, so a
   keyboard visitor can reach Buy Now and the bag icon but not the details route.
   The fix is `tabindex="0" role="button"` plus an Enter/Space handler in
-  `frontend/js/shared/product-section-shared-module.js` — small, but it adds a
+  `public/js/shared/product-section-shared-module.js` — small, but it adds a
   tab stop to a render path five surfaces share, so it belongs in its own change.
 
 ## Still open before live keys

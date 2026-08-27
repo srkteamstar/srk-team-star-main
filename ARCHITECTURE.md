@@ -55,7 +55,7 @@ layout: **the frontend and the backend are organised on the same principle**, so
 knowing where to look in one tells you where to look in the other.
 
 ```
-backend/src/                        frontend/js/
+backend/src/                        public/js/
 ├── core/          boot-once         ├── platform/     every page, no domain
 │                  infrastructure    │
 ├── shared/        generic, imports  ├── shared/       used by 2+ features
@@ -285,12 +285,14 @@ on it.
 
 ```
 frontend/
-├── pages/          the HTML. Mounted at `/`, so URLs are unchanged.
-│   ├── index.html  about.html  catalogue.html  contact.html
-│   ├── store/      store.html  checkout.html
-│   └── blog/       index.html + 8 articles
-├── assets/         624 files — images, fonts, the compiled stylesheet
-├── public/         files that must answer from the site root (robots.txt)
+└── pages/          the HTML. Mounted at `/`, so URLs are unchanged.
+    ├── index.html  about.html  catalogue.html  contact.html
+    ├── store/      store.html  checkout.html
+    └── blog/       index.html + 8 articles
+
+public/             committed here so Vercel can discover static assets
+├── assets/         images, fonts, the compiled stylesheet
+├── robots.txt      file that must answer from the site root
 └── js/
     ├── platform/   8 modules on every page, no domain knowledge
     ├── shared/     2 modules used by more than one feature
@@ -322,9 +324,9 @@ documented as such; converting them is a separate task with its own risk.
 ## Serving: four mounts, and a backend that is not under any of them
 
 ```
-/js       → frontend/js
-/assets   → frontend/assets
-/         → frontend/public      (robots.txt)
+/js       → public/js
+/assets   → public/assets
+/         → public               (robots.txt)
 /         → frontend/pages       (the documents, including store/ and blog/)
 ```
 
@@ -334,7 +336,7 @@ were readable by anyone who asked. A `PRIVATE_PATH` regex was the only thing
 refusing them.
 
 That regex is still here, and it is **no longer load-bearing**: the mounts serve
-`frontend/` and nothing else, so there is no path a request can spell that
+only `public/` and `frontend/pages/`, so there is no path a request can spell that
 reaches the backend at any depth. That is a stronger guarantee than a deny list,
 because it cannot be defeated by a pattern nobody thought of. The guard stays
 anyway — it costs one regex per request, it still refuses stray `.md`/`.sql`/

@@ -1,10 +1,9 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "express",
-  "buildCommand": "npm run build",
   "functions": {
     "server.js": {
-      "includeFiles": "{backend/templates/**,frontend/pages/**/*.html,frontend/js/modules/legal/policy-loader.js}"
+      "includeFiles": "{backend/templates/**,frontend/pages/**/*.html,public/js/modules/legal/policy-loader.js}"
     }
   },
   "headers": [

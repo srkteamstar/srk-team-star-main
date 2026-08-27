@@ -60,7 +60,7 @@ module.exports = {
     content: [
         '../frontend/pages/**/*.html',
         './templates/*.html',
-        '../frontend/js/**/*.js'
+        '../public/js/**/*.js'
     ],
 
     // No theme extension, on purpose. The site's palette is written as Tailwind

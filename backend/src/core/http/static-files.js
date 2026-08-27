@@ -38,7 +38,7 @@ const BEHAVIOUR_FILE = /\.(?:js|css|html)$/i;
 
 /**
  * Vercel ignores express.static(), and its CDN serves assets and browser
- * modules from the generated root public/ directory. HTML deliberately stays
+ * modules from the committed root public/ directory. HTML deliberately stays
  * in the function so it still passes through securityHeaders and receives the
  * same per-document CSP as every other deployment.
  *

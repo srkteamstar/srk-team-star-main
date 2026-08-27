@@ -18,9 +18,8 @@ backend/blob-report/
 test-results/
 playwright-report/
 
-# Generated only during a Vercel build. The authored frontend remains under
-# frontend/; committing this directory would duplicate hundreds of megabytes.
-/public/
+# Vercel's local project metadata. The root public/ directory is authored and
+# committed because Vercel serves that directory through its CDN.
 /.vercel/
 
 # Editor and OS noise.

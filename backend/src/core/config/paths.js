@@ -28,14 +28,14 @@ const FRONTEND_ROOT = path.join(PROJECT_ROOT, 'frontend');
 /** frontend/pages/ — the HTML documents, mounted at `/`. */
 const PAGES_ROOT = path.join(FRONTEND_ROOT, 'pages');
 
-/** frontend/js/ — the browser modules, mounted at `/js`. */
-const JS_ROOT = path.join(FRONTEND_ROOT, 'js');
+/** public/js/ — the browser modules, mounted at `/js`. */
+const JS_ROOT = path.join(PROJECT_ROOT, 'public', 'js');
 
-/** frontend/assets/ — images, fonts and the compiled stylesheet, at `/assets`. */
-const ASSETS_ROOT = path.join(FRONTEND_ROOT, 'assets');
+/** public/assets/ — images, fonts and the compiled stylesheet, at `/assets`. */
+const ASSETS_ROOT = path.join(PROJECT_ROOT, 'public', 'assets');
 
-/** frontend/public/ — files that must answer from the site root (robots.txt). */
-const PUBLIC_ROOT = path.join(FRONTEND_ROOT, 'public');
+/** public/ — Vercel CDN assets and files served from the site root. */
+const PUBLIC_ROOT = path.join(PROJECT_ROOT, 'public');
 
 /** backend/templates/ — server-rendered shells. Never served as files. */
 const TEMPLATES_ROOT = path.join(BACKEND_ROOT, 'templates');

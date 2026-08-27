@@ -3,7 +3,7 @@
  * ============================================================================
  *
  * `POST /api/submit-form` — the one anonymous write in this module, reached by
- * the enquiry form on ten pages through frontend/js/modules/enquiries.
+ * the enquiry form on ten pages through public/js/modules/enquiries.
  *
  * THIS HANDLER IS NOT THIN, and that is deliberate rather than an oversight.
  * It is one insert with a validation preamble and a single documented retry

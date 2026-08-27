@@ -51,17 +51,21 @@ npm run watch:css     # rebuild on save — the reflex that goes with npm run de
 ```
 
 Tailwind is compiled ahead of time into
-`frontend/assets/vendor/tailwind.build.css`. **A new class does not exist until
+`public/assets/vendor/tailwind.build.css`. **A new class does not exist until
 the sheet is rebuilt.** The generated file is committed, so a fresh checkout
 runs with no build; only whoever changed a class needs to run it.
 
 `backend/tailwind.config.js` scans `frontend/pages/**/*.html`,
-`backend/templates/*.html` and `frontend/js/**/*.js`. That last glob is
+`backend/templates/*.html` and `public/js/**/*.js`. That last glob is
 load-bearing — most markup in this project is built in JavaScript string
 literals, and a content list of HTML alone would produce a stylesheet that looks
 complete and silently drops the entire store UI. Tailwind matches literal text,
 so **write class names out in full**; a name assembled from pieces
 (`'bg-' + colour`) will not survive the build.
+
+The root `public/` tree is also the source Vercel serves through its CDN. It is
+authored and committed, not generated during deployment; Vercel discovers an
+Express project's static files before running an optional build command.
 
 ---
 
