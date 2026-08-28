@@ -34,15 +34,14 @@
  *
  * NOTHING HERE CAN RAISE A ROLE, and that is the whole of the boundary.
  * Registration hard-codes the customer role, PATCH /api/auth/me refuses
- * role_id, POST /api/checkout refuses to adopt or create a non-customer
- * profile, and no route or UI grants any other role. Changing somebody's role
+ * role_id, checkout creates no profile at all, and no route or UI grants any
+ * other role. Changing somebody's role
  * is a hand edit in the Supabase table editor.
  *
  * READING A SESSION IS NOT THIS MODULE'S JOB. core/security/guards.js does
  * that, and every other module imports it from there. This module is the only
  * one that OPENS a session, which is why the door is here, behind one rate
- * limiter, and why checkout may create only a brand-new password account — it
- * never verifies credentials for an existing one.
+ * limiter. Checkout never verifies credentials or opens a session.
  */
 const express = require('express');
 const { customerAuthController } = require('./controllers/customer-auth.controller');

@@ -150,18 +150,18 @@
     // it. The resting colour is wrong for the same reason — `*` paints the span
     // #1f271b where the token asks for #12170f — so both states are pinned.
     ensureStyles('checkout-print-button-styles', [
-        '#checkout-print svg { stroke: #12170f; transition: stroke 200ms ease; }',
+        '#checkout-invoice svg { stroke: #12170f; transition: stroke 200ms ease; }',
         // font-weight/size ride along because the same `*` rule sets both on
         // every element: without these the label would render at the universal
         // 500 while every other button on the row is 700.
-        '#checkout-print span { color: #12170f; transition: color 200ms ease; font-weight: inherit; font-size: inherit; }',
-        '#checkout-print:hover svg { stroke: #ffffff; }',
-        '#checkout-print:hover span { color: #ffffff; }',
+        '#checkout-invoice span { color: #12170f; transition: color 200ms ease; font-weight: inherit; font-size: inherit; }',
+        '#checkout-invoice:hover svg { stroke: #ffffff; }',
+        '#checkout-invoice:hover span { color: #ffffff; }',
         // A disabled button answers no hover, so neither the glyph nor the
         // label may flip — the button spends 1.8s disabled every time it is
         // pressed, and it is relabelled for exactly that window.
-        '#checkout-print:disabled:hover svg { stroke: #12170f; }',
-        '#checkout-print:disabled:hover span { color: #12170f; }'
+        '#checkout-invoice:disabled:hover svg { stroke: #12170f; }',
+        '#checkout-invoice:disabled:hover span { color: #12170f; }'
     ].join(''));
 
     // THE WHOLE-PAGE ACTION ROW IS SIZED HERE, FOR THE SAME REASON THE FIELDS
@@ -420,7 +420,6 @@
             const values = readForm();
             const typed = {};
             Object.entries(Object.assign({}, values.contact, values.address)).forEach(([key, value]) => {
-                if (key === 'password') return;
                 if (typeof value === 'string' && value.trim() !== '') typed[key] = value;
             });
             draft = Object.assign(typed, { paymentMode, paymentMethod });
@@ -744,7 +743,7 @@
         };
 
         return [
-            '<form autocomplete="on" data-srk-password-manager="allow" id="checkout-form" novalidate>',
+            '<form autocomplete="on" id="checkout-form" novalidate>',
             '    ' + signedInNoticeHTML(),
 
             '    <section class="mb-10">',
@@ -757,13 +756,10 @@
             // email on an account is a verified flow this page does not own.
             '            ' + textFieldHTML({ id: 'checkout-email', label: 'Email Address', type: 'email', placeholder: 'you@business.com', required: true, value: customer ? c.email : value('email', c.email), readonly: !!customer, autocomplete: customer ? undefined : 'username' }),
             '            ' + textFieldHTML({ id: 'checkout-company', label: 'Business Name', placeholder: 'Optional', value: value('company', c.company) }),
-            customer
-                ? ''
-                : '            ' + textFieldHTML({ id: 'checkout-password', label: 'Create Account Password', type: 'password', placeholder: 'At least 8 characters', required: true, maxlength: 128, autocomplete: 'new-password' }),
             '        </div>',
             customer
                 ? '        <p class="text-[11px] text-[#1f271b]/45 mt-3">Contact us to change the email on your account.</p>'
-                : '        <p class="text-[11px] text-[#1f271b]/45 mt-3">New customer? This password protects the account created with your order. Already have an account? Sign in above first.</p>',
+                : '        <p class="text-[11px] text-[#1f271b]/45 mt-3">We use these details only to confirm and fulfil this order. No account will be created.</p>',
             '    </section>',
 
             '    <section class="mb-10">',
@@ -869,18 +865,24 @@
     // That order is also what puts it beside "View my orders" on the top row
     // of #checkout-actions' grid, with the way out spanning the row beneath —
     // see the stylesheet above for why the layout lives there and not here.
-    const printOrder = '<button type="button" id="checkout-print" class="' +
-        SECONDARY_BUTTON_CLASSES + ' gap-2">' + PRINT_ICON +
-        '<span>Print / Download PDF</span></button>';
-
     function placedHTML(result) {
+        const invoiceAction = result && result.order_id
+            ? '<button type="button" id="checkout-invoice" data-order-id="' + escapeHtml(String(result.order_id)) + '"' +
+              (result.order_access_token ? ' data-order-access-token="' + escapeHtml(String(result.order_access_token)) + '"' : '') + ' class="' +
+              SECONDARY_BUTTON_CLASSES + ' gap-2">' + PRINT_ICON + '<span>View / Print Invoice</span></button>'
+            : (result && result.customer
+                ? '<a href="/store/store.html#account" class="' + SECONDARY_BUTTON_CLASSES + '">Find invoice in My Orders</a>'
+                : '');
+        const accountAction = result && result.customer
+            ? '<a href="/store/store.html#account" class="' + PRIMARY_BUTTON_CLASSES + '">View my orders</a>'
+            : '';
         return noticeHTML(
             'Order placed',
             'Your reference is <span class="font-bold text-[#12170f]">' + escapeHtml(result.reference) + '</span>. ' +
             'Keep this reference for your records. Our team will contact you using the details supplied when the order is ready to progress.',
             [
-                '<a href="/store/store.html#account" class="' + PRIMARY_BUTTON_CLASSES + '">View my orders</a>',
-                printOrder,
+                accountAction,
+                invoiceAction,
                 backToStore
             ]
         );
@@ -1103,7 +1105,7 @@
             if (live.status !== 'Pending Payment') {
                 rememberPending(null);
                 cart.clear();
-                paint(placedHTML({ reference: live.reference }));
+                paint(placedHTML({ reference: live.reference, order_id: live.id }));
                 return true;
             }
 
@@ -1197,7 +1199,6 @@
         { id: 'checkout-name', message: 'Enter your name.' },
         { id: 'checkout-email', message: 'Enter your email address.' },
         { id: 'checkout-phone', message: 'Enter a phone number we can reach you on.' },
-        { id: 'checkout-password', message: 'Create a password.' },
         { id: 'checkout-address', message: 'Enter a street address.' },
         { id: 'checkout-city', message: 'Enter a city.' },
         { id: 'checkout-state', message: 'Enter a state.' },
@@ -1215,11 +1216,7 @@
                 name: value('checkout-name'),
                 email: value('checkout-email'),
                 phone: value('checkout-phone'),
-                company: value('checkout-company'),
-                password: (() => {
-                    const field = document.getElementById('checkout-password');
-                    return field ? field.value : '';
-                })()
+                company: value('checkout-company')
             },
             address: {
                 address_line: value('checkout-address'),
@@ -1288,17 +1285,6 @@
         if (firstBad) {
             firstBad.focus({ preventScroll: true });
             firstBad.scrollIntoView({ block: 'center', behavior: 'smooth' });
-            showBanner('Check the highlighted fields and try again.');
-            return;
-        }
-
-        const passwordField = document.getElementById('checkout-password');
-        if (passwordField && (passwordField.value.length < 8 || passwordField.value.length > 128)) {
-            fieldError(passwordField, passwordField.value.length < 8
-                ? 'Use at least 8 characters.'
-                : 'Use no more than 128 characters.');
-            passwordField.focus({ preventScroll: true });
-            passwordField.scrollIntoView({ block: 'center', behavior: 'smooth' });
             showBanner('Check the highlighted fields and try again.');
             return;
         }
@@ -1377,9 +1363,7 @@
             // has been repainted away, and readForm() would hand back empty
             // strings — so the modal would lose its prefill precisely on the
             // retry where the customer least wants to retype.
-            const paymentContact = Object.assign({}, body.contact);
-            delete paymentContact.password;
-            rememberPending(Object.assign({}, payload, { contact: paymentContact }));
+            rememberPending(Object.assign({}, payload, { contact: Object.assign({}, body.contact) }));
             clearDraft();
             return startPayment();
         }
@@ -1414,7 +1398,12 @@
                 rememberPending(null);
                 setBusy(false);
                 cart.clear();
-                paint(placedHTML({ reference: (result && result.reference) || order.reference }));
+                paint(placedHTML({
+                    reference: (result && result.reference) || order.reference,
+                    order_id: (result && result.order_id) || order.order_id,
+                    order_access_token: order.order_access_token,
+                    customer: order.customer
+                }));
             },
 
             // One attempt failed and the modal is still open on its retry
@@ -1475,7 +1464,10 @@
             response = await fetch('/api/orders/' + encodeURIComponent(order.order_id) + '/cancel', {
                 method: 'POST',
                 credentials: 'include',
-                headers: { 'Content-Type': 'application/json' }
+                headers: Object.assign(
+                    { 'Content-Type': 'application/json' },
+                    order.order_access_token ? { 'X-Order-Access-Token': order.order_access_token } : {}
+                )
             });
             payload = await response.json().catch(() => null);
         } catch (error) {
@@ -1504,18 +1496,6 @@
         rememberPending(null);
         // Straight back to the form, with the basket intact.
         start();
-    }
-
-    function handlePrintOrder(button) {
-        if (!button || button.disabled) return;
-        let style = document.getElementById('order-print-styles');
-        if (!style) {
-            style = document.createElement('style');
-            style.id = 'order-print-styles';
-            style.textContent = '@media print{body>*:not(#checkout-root){display:none!important}#checkout-root{max-width:none!important;padding:0!important}#order-print,#order-done{display:none!important}}';
-            document.head.appendChild(style);
-        }
-        window.print();
     }
 
     // The server names the field it rejected in its own vocabulary
@@ -1549,8 +1529,13 @@
         // so a click lands on one of those far more often than on the button
         // itself. (checkout-retry above is bare text, which is why an id test
         // is enough for it.)
-        const print = target.closest && target.closest('#checkout-print');
-        if (print) return handlePrintOrder(print);
+        const invoice = target.closest && target.closest('#checkout-invoice');
+        if (invoice && window.orderInvoice) {
+            return window.orderInvoice.open(
+                invoice.getAttribute('data-order-id'),
+                invoice.getAttribute('data-order-access-token') || undefined
+            );
+        }
 
         // "These need a quote" — carry the basket across the navigation.
         //

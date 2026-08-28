@@ -49,12 +49,7 @@
  *
  * WHAT IT IMPORTS FROM SIBLINGS, all through published interfaces:
  *   products.public -> findActiveProductsByIds   the catalogue it prices from
- *   auth.public     -> password-protecting a new guest account and opening its session
- *
- * The auth edge is the one WRITE crossing a module boundary in this codebase
- * (startSession). It stays a synchronous call rather than an event because the
- * customer has to be signed in by the time this response is written, and it is
- * recorded as a deliberate deviation in ARCHITECTURE.md.
+ *   auth.public     -> contact normalization and signed-in profile/address reads
  */
 const express = require('express');
 const { checkoutController } = require('./controllers/checkout.controller');

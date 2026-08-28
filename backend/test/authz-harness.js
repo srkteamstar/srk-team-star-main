@@ -60,9 +60,21 @@ const db = {
     ],
     orders: [
         { id: 900, order_number: 900, user_id: 200, status: 'Processing', tracking: null,
-          amount: 1000, shipping_amount: 0, tax_amount: 180, net_amount: 1180, created_at: '2026-02-01T00:00:00Z' },
+          amount: 1000, shipping_amount: 0, tax_amount: 180, net_amount: 1180, created_at: '2026-02-01T00:00:00Z',
+          invoice_number: 'INV-20260201-000900', invoice_issued_at: '2026-02-01T00:00:00Z',
+          currency: 'INR', tax_rate: 0.18, tax_type: 'CGST_SGST', place_of_supply: 'Haryana',
+          buyer_name: 'Fake Customer A', buyer_company: 'A Ltd', buyer_email: 'a@example.test', buyer_phone: '9000000002',
+          seller_legal_name: 'Pooja Rani', seller_trade_name: 'SRK Team Star', seller_gstin: '06DOCPR1264G1Z0',
+          seller_address: 'Behind New ITI, Gohana, Haryana 131301, India', seller_email: 'srkteamstar@gmail.com',
+          seller_phone: '+91 90500 09442', seller_state: 'Haryana' },
         { id: 901, order_number: 901, user_id: 201, status: 'Shipped', tracking: 'TRK-B',
-          amount: 2000, shipping_amount: 0, tax_amount: 360, net_amount: 2360, created_at: '2026-02-02T00:00:00Z' }
+          amount: 2000, shipping_amount: 0, tax_amount: 360, net_amount: 2360, created_at: '2026-02-02T00:00:00Z',
+          invoice_number: 'INV-20260202-000901', invoice_issued_at: '2026-02-02T00:00:00Z',
+          currency: 'INR', tax_rate: 0.18, tax_type: 'CGST_SGST', place_of_supply: 'Haryana',
+          buyer_name: 'Fake Customer B', buyer_company: 'B Ltd', buyer_email: 'b@example.test', buyer_phone: '9000000003',
+          seller_legal_name: 'Pooja Rani', seller_trade_name: 'SRK Team Star', seller_gstin: '06DOCPR1264G1Z0',
+          seller_address: 'Behind New ITI, Gohana, Haryana 131301, India', seller_email: 'srkteamstar@gmail.com',
+          seller_phone: '+91 90500 09442', seller_state: 'Haryana' }
     ],
     order_items: [
         { id: 1, order_id: 900, product_id: 1, product_name: 'Fake Machine', price: 1000, quantity: 1, total_amount: 1000 },
@@ -72,19 +84,16 @@ const db = {
         { id: 1, order_id: 900, full_address: '1 A Street', city: 'Gohana', state: 'Haryana', country: 'India', zip_code: '131301' },
         { id: 2, order_id: 901, full_address: '2 B Street', city: 'Sonipat', state: 'Haryana', country: 'India', zip_code: '131001' }
     ],
-    // Two rows written before the picker was cut down to pay-now /
-    // pay-on-receipt, and left holding the instruments of that era on purpose.
-    // `payments.payment_method` carries no check constraint (migration 014
-    // constrains `gateway` and `status`, not this), so historic orders keep
-    // reading as what they actually were — and the customer's own order list
-    // has to go on rendering them.
+    // One COD row and one settled gateway-shaped row keep both invoice payment
+    // presentations observable without giving the storefront a privileged
+    // reporting route.
     payments: [
-        { id: 1, order_id: 900, gateway: 'offline', payment_method: 'Bank Transfer', amount: 1180,
+        { id: 1, order_id: 900, gateway: 'offline', payment_method: 'Cash on Delivery', amount: 1180,
           amount_paise: 118000, currency: 'INR', gateway_order_id: null, transaction_id: null,
           status: 'Pending', verified_at: null, created_at: '2026-02-01T00:00:00Z' },
-        { id: 2, order_id: 901, gateway: 'offline', payment_method: 'UPI', amount: 2360,
-          amount_paise: 236000, currency: 'INR', gateway_order_id: null, transaction_id: null,
-          status: 'Pending', verified_at: null, created_at: '2026-02-02T00:00:00Z' }
+        { id: 2, order_id: 901, gateway: 'razorpay', payment_method: 'upi', amount: 2360,
+          amount_paise: 236000, currency: 'INR', gateway_order_id: 'order_SETTLED', transaction_id: 'pay_SETTLED',
+          status: 'Paid', verified_at: '2026-02-02T00:05:00Z', created_at: '2026-02-02T00:00:00Z' }
     ],
     // Migration 014's append-only webhook log. Empty rather than absent: the
     // stub's insert pushes into `db[table] || []`, and an absent table means
@@ -128,11 +137,11 @@ const db = {
     // image per row) is what `image_url` stands in for.
     products_with_image: [
         { id: 1, name: 'Fake Machine', url_slug: 'fake-machine', description: 'd', featured_description: null,
-          price: '1000', category_id: 10, asset_folder: 'Fake Machine', is_active: true,
+          price: '1000', category_id: 10, category_name: 'Machinery', asset_folder: 'Fake Machine', is_active: true,
           is_featured: true, is_best_seller: false, is_new_arrival: false, image_url: null,
           created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' },
         { id: 2, name: 'Fake On Request', url_slug: 'fake-on-request', description: 'd', featured_description: null,
-          price: 'On request', category_id: 10, asset_folder: 'Fake On Request', is_active: true,
+          price: 'On request', category_id: 10, category_name: 'Machinery', asset_folder: 'Fake On Request', is_active: true,
           is_featured: false, is_best_seller: false, is_new_arrival: false, image_url: null,
           created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }
     ],
@@ -385,16 +394,46 @@ function makeQuery(table) {
 const fakeSupabase = {
     from: (table) => makeQuery(table),
     rpc: async (name, args) => {
+        if (name === 'create_quote_request') {
+            if (control.consumeQuoteRpcMissing()) {
+                return {
+                    data: null,
+                    error: {
+                        code: 'PGRST202',
+                        message: 'Could not find the function public.create_quote_request(p_items, p_request) in the schema cache'
+                    }
+                };
+            }
+            const request = Object.assign({
+                id: ++nextId,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+            }, args.p_request);
+            const items = (args.p_items || []).map(item => Object.assign({
+                id: ++nextId,
+                quote_request_id: request.id,
+                created_at: new Date().toISOString()
+            }, item));
+
+            db.quote_requests.push(request);
+            db.quote_request_items.push(...items);
+            return { data: { id: request.id, created_at: request.created_at }, error: null };
+        }
+
         if (name !== 'create_store_order') return { data: null, error: { message: `unstubbed RPC: ${name}` } };
         if (control.consumeAtomicCheckoutFailure()) {
             return { data: null, error: { message: 'forced atomic checkout failure' } };
         }
 
+        const createdAt = new Date().toISOString();
+        const orderNumber = nextId + 1;
         const order = Object.assign({
             id: ++nextId,
-            order_number: nextId,
+            order_number: orderNumber,
             user_id: args.p_user_id,
-            created_at: new Date().toISOString()
+            created_at: createdAt,
+            invoice_issued_at: createdAt,
+            invoice_number: `INV-${createdAt.slice(0, 10).replace(/-/g, '')}-${String(orderNumber).padStart(6, '0')}`
         }, args.p_order);
         const items = (args.p_items || []).map(item => Object.assign({ id: ++nextId, order_id: order.id }, item));
         const shipping = Object.assign({ id: ++nextId, order_id: order.id }, args.p_shipping);

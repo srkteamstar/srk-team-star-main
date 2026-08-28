@@ -4,38 +4,20 @@
  *
  * THE ONLY FILE IN THIS MODULE ANOTHER MODULE MAY REQUIRE.
  *
- * ONE CALLER, AND ONE REASON. modules/checkout serves guests, and
- * orders.user_id is NOT NULL, so a guest checkout has to create the password
- * account the order will hang from and then sign it in. Existing accounts are
- * refused there and must use the rate-limited login route. This is genuinely
- * an auth operation, and the alternative - checkout owning password hashing
- * and req.session itself - is how a second, unreviewed sign-in door appears.
- *
- * startSession IS A WRITE CROSSING A MODULE BOUNDARY, which the doctrine says
- * should be an event rather than a call. It stays a call, deliberately: the
- * customer must be signed in by the time the checkout response is written, and
- * an asynchronous event cannot promise that. The exception is recorded in
- * ARCHITECTURE.md rather than left for a reader to find.
- *
- * WHAT PROTECTS IT. POST /api/checkout refuses every existing profile and
- * hard-codes the customer role on the new one, so this cannot be used to mint
- * somebody else's or a privileged session. That guard is asserted in
- * authz.test.js.
+ * modules/checkout uses these narrow reads and normalizers for two distinct
+ * paths: signed-in customers get authoritative account contact data and a
+ * saved-address update; guests get normalized contact values frozen directly
+ * on their order. Checkout does not create accounts or open sessions.
  */
 const { normalizePhone, normalizeEmail } = require('./domain/identifier');
 const { addressForUser } = require('./infrastructure/profile.repository');
 const { publicProfile } = require('./services/profile-view.service');
-const { startSession } = require('./services/session.service');
-const { passwordProblem, hashCustomerPassword } = require('./services/customer-password.service');
 
 module.exports = {
     normalizePhone,
     normalizeEmail,
     addressForUser,
-    publicProfile,
-    startSession,
-    passwordProblem,
-    hashCustomerPassword
+    publicProfile
 };
 
 // roleIdByName is deliberately NOT re-exported here. It is a core RBAC

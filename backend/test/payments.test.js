@@ -77,7 +77,7 @@ const CART = [{ product_id: 1, quantity: 1 }];
 
 const CONTACT = (n) => ({
     name: 'Pay Tester', email: `payer${n}@example.test`, phone: `90000100${n}`,
-    company: null, password: 'correct-horse-42'
+    company: null
 });
 
 const ADDRESS = {
@@ -122,9 +122,23 @@ async function sendWebhook(eventId, event, entity, options) {
 }
 
 (async () => {
+    // Payment history and account ownership are tested with the two explicit
+    // fixture accounts. Guest checkout itself is covered in authz.test.js and
+    // no longer creates a session as a side effect.
+    const accountA = jar();
+    const accountB = jar();
+    let login = await req(accountA, 'POST', '/api/auth/login', {
+        identifier: 'a@example.test', password: 'correct-horse-42'
+    });
+    check('payment fixture customer A signs in explicitly', login.status === 200, JSON.stringify(login.body));
+    login = await req(accountB, 'POST', '/api/auth/login', {
+        identifier: 'b@example.test', password: 'correct-horse-42'
+    });
+    check('payment fixture customer B signs in explicitly', login.status === 200, JSON.stringify(login.body));
+
     console.log('\n=== 1. THE ORDER IS CREATED UNPAID, AND SAYS SO ===');
 
-    const buyer = jar();
+    const buyer = accountA;
     let r = await placeOrder(buyer, 1);
 
     check('checkout returns a gateway handshake', r.status === 201 && r.body.payment && r.body.payment.gateway_order_id,
@@ -173,7 +187,7 @@ async function sendWebhook(eventId, event, entity, options) {
     // (b) THE ONE MOST INTEGRATIONS MISS.
     //     A genuine Razorpay signature, correctly verified — but issued for a
     //     different, cheaper order. Signature verification alone says yes.
-    const buyerB = jar();
+    const buyerB = accountB;
     const second = await placeOrder(buyerB, 2);
     const orderB = { id: second.body.order_id, ...second.body.payment };
     const paymentForB = `pay_captured_${orderB.amount_paise}_${orderB.gateway_order_id}`;
@@ -199,7 +213,7 @@ async function sendWebhook(eventId, event, entity, options) {
         r.status === 409 && r.body.reason === 'mismatch', JSON.stringify(r.body));
 
     // (d) Authorised but never captured. Money has not moved.
-    const orderC = await placeOrder(jar(), 3);
+    const orderC = await placeOrder(accountB, 3);
     const pending = `pay_authorized_${orderC.body.payment.amount_paise}_${orderC.body.payment.gateway_order_id}`;
     r = await req(buyer, 'POST', '/api/payments/verify', {
         order_id: orderC.body.order_id,
@@ -212,7 +226,7 @@ async function sendWebhook(eventId, event, entity, options) {
 
     console.log('\n=== 3. A REAL PAYMENT IS ACCEPTED, ONCE ===');
 
-    const clean = jar();
+    const clean = accountA;
     const fresh = await placeOrder(clean, 4);
     const orderD = { id: fresh.body.order_id, ...fresh.body.payment };
     const paidId = `pay_captured_${orderD.amount_paise}_${orderD.gateway_order_id}`;
@@ -237,7 +251,7 @@ async function sendWebhook(eventId, event, entity, options) {
 
     console.log('\n=== 4. THE WEBHOOK IS THE AUTHORITY, AND IT REPEATS ITSELF ===');
 
-    const webhookBuyer = jar();
+    const webhookBuyer = accountB;
     const wh = await placeOrder(webhookBuyer, 5);
     const orderE = { id: wh.body.order_id, ...wh.body.payment };
     const whPayment = `pay_captured_${orderE.amount_paise}_${orderE.gateway_order_id}`;
@@ -272,6 +286,12 @@ async function sendWebhook(eventId, event, entity, options) {
     check('...and the order is now paid and moved to Processing',
         nowPaid && nowPaid.payment_status === 'Paid' && nowPaid.status === 'Processing',
         JSON.stringify(nowPaid && { s: nowPaid.status, p: nowPaid.payment_status }));
+
+    r = await req(webhookBuyer, 'GET', `/api/orders/${orderE.id}/invoice`);
+    check('the invoice refresh reflects the verified gateway payment',
+        r.status === 200 && r.body.payment.status === 'Paid' && r.body.payment.paid === true &&
+        r.body.payment.method === 'upi' && r.body.payment.transaction_reference === whPayment && r.body.payment.verified_at,
+        JSON.stringify(r.body && r.body.payment));
 
     // Razorpay redelivers on any non-2xx, and sometimes on a slow 2xx.
     r = await sendWebhook('evt_real_1', 'payment.captured', entity);
@@ -313,7 +333,7 @@ async function sendWebhook(eventId, event, entity, options) {
     // that quietly places itself unpaid.
 
     // ---- Cash on Delivery -------------------------------------------------
-    const codBuyer = jar();
+    const codBuyer = accountA;
     r = await req(codBuyer, 'POST', '/api/checkout', {
         items: CART, contact: CONTACT(70), address: ADDRESS,
         payment_mode: 'offline', payment_method: 'Cash on Delivery'
@@ -337,9 +357,13 @@ async function sendWebhook(eventId, event, entity, options) {
         cod && cod.payment_status === 'Pending', JSON.stringify(cod && cod.payment_status));
     check('...and the chosen method was stored',
         cod && cod.payment_method === 'Cash on Delivery', JSON.stringify(cod && cod.payment_method));
+    r = await req(codBuyer, 'GET', `/api/orders/${cod.id}/invoice`);
+    check('...and its invoice says payment is pending, not received',
+        r.status === 200 && r.body.payment.status === 'Pending' && r.body.payment.paid === false &&
+        r.body.payment.method === 'Cash on Delivery', JSON.stringify(r.body && r.body.payment));
 
     // ---- Pay now, on the same server --------------------------------------
-    const onlineBuyer = jar();
+    const onlineBuyer = accountB;
     r = await req(onlineBuyer, 'POST', '/api/checkout', {
         items: CART, contact: CONTACT(71), address: ADDRESS,
         payment_mode: 'online', payment_method: 'Cash on Delivery'
@@ -363,7 +387,7 @@ async function sendWebhook(eventId, event, entity, options) {
         online && online.payment_method === null, JSON.stringify(online && online.payment_method));
 
     // ---- The body is not trusted about the instrument either ---------------
-    const oddBuyer = jar();
+    const oddBuyer = accountA;
     r = await req(oddBuyer, 'POST', '/api/checkout', {
         items: CART, contact: CONTACT(72), address: ADDRESS,
         payment_mode: 'offline', payment_method: 'Goats'
@@ -415,11 +439,7 @@ async function sendWebhook(eventId, event, entity, options) {
     check("another customer cannot cancel somebody else's order",
         r.status === 404, `${r.status} ${JSON.stringify(r.body).slice(0, 120)}`);
 
-    // A FRESH jar. The suite's other jars have all walked a guest checkout,
-    // and POST /api/checkout creates the account an order needs and signs it
-    // in — so asking "can a signed-out visitor do this?" through one of those
-    // would answer through a real session and pass for the wrong reason. The
-    // same trap section 18 of authz.test.js documents.
+    // A fresh jar has neither an account session nor a guest order token.
     r = await req(jar(), 'POST', `/api/orders/${onlineOrderId}/cancel`);
     check('a signed-out visitor cannot cancel anything',
         r.status === 401, `${r.status} ${JSON.stringify(r.body).slice(0, 120)}`);
@@ -476,12 +496,12 @@ async function sendWebhook(eventId, event, entity, options) {
 
     // webhookBuyer's order was marked Paid by a genuine signed webhook in
     // section 4. Money moved; a storefront button must not close it.
-    const paidOrder = (await req(webhookBuyer, 'GET', '/api/orders/mine')).body[0];
+    const paidOrder = (await req(webhookBuyer, 'GET', '/api/orders/mine')).body.find(order => order.id === orderE.id);
     r = await req(webhookBuyer, 'POST', `/api/orders/${paidOrder.id}/cancel`);
     check('a PAID order cannot be cancelled from the storefront',
         r.status === 409, `${r.status} ${JSON.stringify(r.body).slice(0, 140)}`);
     check('...and it is still Paid afterwards',
-        (await req(webhookBuyer, 'GET', '/api/orders/mine')).body[0].payment_status === 'Paid',
+        (await req(webhookBuyer, 'GET', '/api/orders/mine')).body.find(order => order.id === orderE.id).payment_status === 'Paid',
         'the refused cancel changed the payment status');
 
     console.log('\n=== 9. THE OFFLINE INSTRUMENTS ARE PUBLISHED, NOT DUPLICATED ===');

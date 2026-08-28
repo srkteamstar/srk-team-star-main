@@ -162,11 +162,11 @@ and everything may read them.
 |---|---|---|
 | `auth` | the account and the storefront's one sign-in door | 5 |
 | `enquiries` | `enquiries`, `form_types` | 1 |
-| `quotes` | `quote_requests` + items | 1 |
+| `quotes` | `quote_requests` + items | 2 |
 | `projects` | `upcoming_projects` as the site reads them | 1 |
 | `categories` | `categories`, the image bucket | 1 |
 | `products` | `products`, `product_images` | 1 |
-| `orders` | orders as a **record** | 2 |
+| `orders` | orders as a **record**, including customer invoices | 3 |
 | `cart` | `cart_items` | 2 |
 | `checkout` | turning a basket into an order | 2 |
 | `payments` | `payments`, `payment_events`, Razorpay | 2 |
@@ -200,7 +200,7 @@ was an oversight.
 
 ---
 
-## The four cross-module edges
+## The five cross-module edges
 
 `tools/verify-boundaries.js` prints them on every run, which is the point — the
 whole claim of this architecture is that they are countable:
@@ -208,16 +208,14 @@ whole claim of this architecture is that they are countable:
 ```
 categories -> products     countProductsByCategory
 checkout   -> products     findActiveProductsByIds
-checkout   -> auth         the guest-checkout account and its session
+quotes     -> products     findProductsForQuoteByIds
+checkout   -> auth         contact normalization and customer profile/address reads
 orders     -> payments     gatewayPaymentRow
 ```
 
-Three of the four are **read ports**: narrow, query-shaped, side-effect free.
+All five are **read ports**: narrow and deliberately scoped.
 That is the doctrine's rule for a synchronous cross-module call — reads may
 cross a boundary through an explicit interface; writes may not cross at all.
-
-The fourth, `checkout → auth`, includes `startSession`, which is a **write**.
-See the deviations below.
 
 There is **no cycle**. `payments` never imports `orders`, which is why the
 status vocabulary is in `shared/contracts/`.
@@ -231,18 +229,13 @@ doctrine and that brief disagreed, the brief won, and the disagreement is
 written down here rather than quietly resolved.
 
 **1. No event bus, no transactional outbox.** The doctrine says state-changing
-cross-module work should be a domain event. Converting a synchronous call into
-an asynchronous one is a behaviour change by definition, and two of the three
-candidates cannot take it:
-
-- `startSession` during guest checkout — the customer has to be signed in by the
-  time the checkout response is written.
-- `markOrderPaid` writing the `orders` table — the four gateway checks and the
-  status flip have to be one indivisible decision. Splitting the write into an
-  event `orders` consumed would put a gap between "we proved money moved" and
-  "the order says so", in the one place in this system where that gap is
-  expensive. The final `UPDATE` is guarded on the awaiting-payment status **in
-  the WHERE clause**, which is what makes it safe to run twice.
+cross-module work should be a domain event. `markOrderPaid` writing the
+`orders` table is the candidate that cannot take it — the four gateway checks
+and the status flip have to be one indivisible decision. Splitting the write
+into an event `orders` consumed would put a gap between "we proved money moved"
+and "the order says so", in the one place in this system where that gap is
+expensive. The final `UPDATE` is guarded on the awaiting-payment status **in
+the WHERE clause**, which is what makes it safe to run twice.
 
 An unused event bus is not architecture, it is dead code — and this repository
 already has a note about an unused write grant being an unguarded door. So there
@@ -369,8 +362,8 @@ registration order.
 
 ```
 npm run verify           three structural checks, ~1s, no network, no database
-npm test                 109 API assertions against the real server.js
-npm run test:browser     55 Playwright journeys
+npm test                 130 API assertions against the real server.js
+npm run test:browser     62 Playwright journeys
 npm run test:all         all of it
 ```
 

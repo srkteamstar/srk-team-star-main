@@ -8,7 +8,8 @@
  *   edges - a customer's order history and a customer's cancel.
  *
  *   GET   /api/orders/mine         customer
- *   POST  /api/orders/:id/cancel   customer
+ *   GET   /api/orders/:id/invoice  customer session or guest order token
+ *   POST  /api/orders/:id/cancel   customer session or guest order token
  *
  * IT DOES NOT CREATE ORDERS. modules/checkout does, in one Postgres function
  * (migration 025's create_store_order), and modules/payments is what clears

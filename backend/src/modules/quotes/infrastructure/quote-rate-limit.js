@@ -16,4 +16,13 @@ const quoteLimiter = rateLimit({
     message: { error: "Too many quote requests from this IP, please try again later." }
 });
 
-module.exports = { quoteLimiter };
+// Live calculation is deliberately a different bucket. A visitor editing two
+// quantities should not spend the five-attempt allowance that protects the
+// database write, and the 350ms browser debounce is not a security boundary.
+const quoteCalculationLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 120,
+    message: { error: "Too many quote calculations from this IP, please pause and try again." }
+});
+
+module.exports = { quoteLimiter, quoteCalculationLimiter };

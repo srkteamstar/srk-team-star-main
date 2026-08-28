@@ -160,10 +160,34 @@ function findActiveProductsByIds(ids) {
         .in('id', ids);
 }
 
+/**
+ * The catalogue fields a quote calculation is allowed to snapshot. The view
+ * supplies the category label as it exists at calculation time, so the quote
+ * module never has to trust a browser-provided product or category name.
+ */
+async function findProductsForQuoteByIds(ids) {
+    const fromView = await supabase
+        .from('products_with_image')
+        .select('id, name, price, is_active, category_id, category_name')
+        .in('id', ids);
+
+    if (!fromView.error) return fromView;
+    if (!isMissingRelation(fromView.error)) return fromView;
+
+    // A not-yet-provisioned view must not make the quote calculator trust the
+    // client. Fall back to the owning table; the category label is deliberately
+    // left null and the quote service gives it a neutral server-side label.
+    return supabase
+        .from('products')
+        .select('id, name, price, is_active, category_id')
+        .in('id', ids);
+}
+
 module.exports = {
     PRODUCT_BUCKET,
     countProductsByCategory,
     fetchProductRows,
     withProductImages,
-    findActiveProductsByIds
+    findActiveProductsByIds,
+    findProductsForQuoteByIds
 };

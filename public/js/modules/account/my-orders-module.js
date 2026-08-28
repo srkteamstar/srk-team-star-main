@@ -245,7 +245,7 @@
             '    <table class="w-full border-collapse"><tbody>' + rows + '</tbody></table>',
             '</div>',
             '<div class="flex items-baseline justify-between gap-4 mt-4 pt-4 border-t border-[#12170f]/10">',
-            '    <span class="' + EYEBROW_CLASSES + ' text-[#1f271b]/50">Order Total</span>',
+            '    <span class="' + EYEBROW_CLASSES + ' text-[#1f271b]/50">Items subtotal</span>',
             '    <span class="text-lg font-bold tracking-tight text-[#12170f]">' +
                  (totals.priced ? escapeHtml((window.formatAmount || (() => ''))(totals.amount)) : '<span class="text-sm italic font-semibold text-[#1f271b]/50">On request</span>') +
             '</span>',
@@ -263,6 +263,9 @@
             '</div>',
             '    <div class="text-[#1f271b]/50 font-bold uppercase text-[10px] tracking-wider pt-0.5">Delivering to</div>',
             '    <div class="text-[#1f271b]/80 font-semibold text-xs leading-relaxed">' + escapeHtml(order.shipping_address || 'No address on file') + '</div>',
+            '</div>',
+            '<div class="mt-5 pt-4 border-t border-[#12170f]/10 flex justify-end">',
+            '    <button type="button" data-view-invoice="' + escapeHtml(String(order.id)) + '" class="px-5 py-2.5 rounded-sm bg-[#4b071e] text-white text-[11px] font-bold uppercase tracking-wider hover:bg-[#12170f] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d4af37]">View / Print Invoice</button>',
             '</div>'
         ].filter(entry => entry !== '').join('\n');
     }
@@ -350,6 +353,11 @@
         container.dataset.ordersWired = 'true';
 
         container.addEventListener('click', (event) => {
+            const invoice = event.target.closest('[data-view-invoice]');
+            if (invoice && container.contains(invoice) && window.orderInvoice) {
+                return window.orderInvoice.open(invoice.getAttribute('data-view-invoice'));
+            }
+
             const cancel = event.target.closest('[data-cancel-order]');
             if (cancel && container.contains(cancel)) return cancelOrder(cancel, container);
 

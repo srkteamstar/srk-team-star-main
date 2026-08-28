@@ -95,25 +95,21 @@
  *     email, phone      ← as entered (phone is text, so a +91 survives)
  *     business_address  ← Business Address
  *     notes             ← Additional Details
- *     items[]           ← { category_id, category_name, product_id,
- *                           product_name, product_price } per request
+     *     items[]           ← { product_id, quantity } per request
  *
  * This used to go to /api/submit-form as `form_type: 'quote'`, which meant the
  * address and every requested product were flattened into the one free-text
  * column `enquiries` has. Nothing downstream could read that back as structure —
  * the back office could only echo the blob under a heading that says "Issue". The
- * ids and the names are both sent: the ids so a quote can be joined back to the
- * catalogue, the names and price so the row still reads correctly after the
- * product is renamed, repriced or deleted. See
- * backend/migrations/009_quote_requests.sql.
+     * The browser sends ids and quantities only. POST
+     * /api/quote-requests/calculate resolves names, categories, current prices
+     * and GST for the live preview; POST /api/quote-requests resolves them again
+     * and migration 029 saves that result atomically as a historical snapshot.
  *
- * The confirmation screen's reference is prefixed `PI-` (proforma invoice —
- * the standard term for a priced pre-order document in B2B trade), not `QT-`.
- * server.js's quoteReference() and the back office's own fallback both changed
- * with it — the three must agree, since the number a customer reads here is
- * the one they quote back to staff. The screen also carries a Print button
- * that opens the browser's print surface, where the confirmation can be
- * printed or saved as a PDF without a second document generator.
+     * The historical `PI-` reference prefix remains the lookup contract shared
+     * with the back office. The printable document is deliberately labelled
+     * "Request Acknowledgement", not a final quotation or proforma invoice: staff
+     * still confirm manual prices, availability and commercial terms.
  *
  * CHROME
  * ------
@@ -162,13 +158,14 @@
     } = chrome;
 
     const ENDPOINT = '/api/quote-requests';
+    const CALCULATE_ENDPOINT = '/api/quote-requests/calculate';
+    const CALCULATION_DEBOUNCE_MS = 350;
 
     const UNCATEGORISED_LABEL = 'Other Products';
 
-    // The reference prefix shown on the confirmation screen and read back by
-    // staff. "PI" — proforma invoice, the standard B2B term for a priced
-    // pre-order document — not "QT". server.js's quoteReference() and
-    // the back office's own fallback carry the same prefix; all three must agree.
+    // Historical lookup prefix shared with existing back-office records. The
+    // printable document names itself as a request acknowledgement so this id
+    // cannot be mistaken for staff approval.
     const REFERENCE_PREFIX = 'PI';
 
     // A new request's category defaults to this if a matching root category is
@@ -220,9 +217,16 @@
            still display:none — which is what keeps a folded request's fields
            out of the tab order and out of the focus trap's reckoning. */
         '.quote-body{transition:max-height 300ms ease-out,opacity 300ms ease-out;}',
+        '.quote-price-skeleton{height:12px;border-radius:999px;background:linear-gradient(90deg,#e8ebe6 25%,#f8faf7 50%,#e8ebe6 75%);background-size:200% 100%;animation:quote-price-shimmer 1.2s infinite;}',
+        '@keyframes quote-price-shimmer{to{background-position:-200% 0;}}',
+        '.quote-print-document{font-family:Arial,sans-serif;color:#12170f;}',
+        '.quote-print-document thead,.quote-print-document thead *{color:#ffffff!important;}',
+        '#quote-print:hover,#quote-print:hover span{color:#ffffff!important;}',
+        '#quote-print:hover svg{color:#ffffff!important;stroke:#ffffff!important;}',
 
         '@media (prefers-reduced-motion:reduce){',
         '.quote-body{transition:none;}',
+        '.quote-price-skeleton{animation:none;}',
         '}'
     ].join('');
 
@@ -302,7 +306,15 @@
 
     function blankRequest() {
         nextUid += 1;
-        return { uid: 'qr-' + nextUid, category: defaultCategoryKey(), subcategory: DIRECT_ONLY, product: '', quantity: 1 };
+        return {
+            uid: 'qr-' + nextUid,
+            category: defaultCategoryKey(),
+            subcategory: DIRECT_ONLY,
+            product: '',
+            quantity: 1,
+            pricing: null,
+            pricingError: ''
+        };
     }
 
     function productById(id) {
@@ -508,7 +520,39 @@
         if (!group) return 'Not yet selected';
         if (!request.product) return group.label;
 
-        return group.label + ' · ' + productName(request.product) + ' · Qty ' + request.quantity;
+        let text = group.label + ' · ' + productName(request.product) + ' · Qty ' + request.quantity;
+        if (request.pricing) {
+            text += request.pricing.pricing_status === 'priced'
+                ? ' · ' + formatMoney(request.pricing.line_total) + ' incl. GST'
+                : request.pricing.pricing_status === 'on_request'
+                    ? ' · Price on request'
+                    : ' · Unavailable';
+        }
+        return text;
+    }
+
+    function linePricingHTML(request) {
+        if (request.pricingError) {
+            return '<p class="quote-line-pricing text-xs font-semibold text-red-700">' + escapeHtml(request.pricingError) + '</p>';
+        }
+        if (state && state.calculating && request.product) {
+            return '<div class="quote-line-pricing quote-price-skeleton w-40" aria-label="Updating price"></div>';
+        }
+        if (!request.product) {
+            return '<p class="quote-line-pricing text-xs text-[#1f271b]/45">Choose a product to check its live price.</p>';
+        }
+        if (!request.pricing) {
+            return '<p class="quote-line-pricing text-xs text-[#1f271b]/45">Price will be checked from the catalogue.</p>';
+        }
+        if (request.pricing.pricing_status === 'priced') {
+            return '<p class="quote-line-pricing text-xs text-[#1f271b]/65"><strong class="text-[#12170f]">' +
+                escapeHtml(formatMoney(request.pricing.unit_price)) + ' / unit</strong> · ' +
+                escapeHtml(formatMoney(request.pricing.line_total)) + ' including GST</p>';
+        }
+        if (request.pricing.pricing_status === 'on_request') {
+            return '<p class="quote-line-pricing text-xs font-semibold text-[#9a7410]">Price and availability will be confirmed by our team.</p>';
+        }
+        return '<p class="quote-line-pricing text-xs font-semibold text-red-700">' + escapeHtml(request.pricing.message || 'This product is unavailable.') + '</p>';
     }
 
     // Two independently-refreshable slots inside .quote-products, not one
@@ -529,6 +573,7 @@
             '    ' + labelHTML(request.uid + '-quantity', 'Quantity', true),
             '    <input autocomplete="srk-no-autofill" id="' + request.uid + '-quantity" class="quote-quantity ' + FIELD_CLASSES + '" type="number" inputmode="numeric" min="1" max="99" step="1" value="' + request.quantity + '" />',
             '    ' + errorHTML(request.uid + '-quantity'),
+            '    <div class="mt-2 min-h-[16px]" aria-live="polite">' + linePricingHTML(request) + '</div>',
             '</div>'
         ].join('\n');
     }
@@ -563,6 +608,57 @@
         ].join('\n');
     }
 
+    function formatMoney(value) {
+        if (typeof window.formatAmount === 'function') return window.formatAmount(value) || '₹ 0';
+        const number = Number(value);
+        return Number.isFinite(number) ? '₹ ' + number.toLocaleString('en-IN', { maximumFractionDigits: 2 }) : '';
+    }
+
+    function pricingSummaryHTML() {
+        const selected = state ? state.requests.filter(request => request.product) : [];
+        if (!selected.length) {
+            return '<p class="text-sm text-[#1f271b]/55">Select a product and quantity. Pricing will update automatically from the server.</p>';
+        }
+        if (state.calculating) {
+            return [
+                '<div class="flex items-center justify-between gap-4">',
+                '    <p class="text-sm font-semibold text-[#1f271b]/60">Checking current catalogue pricing…</p>',
+                '    <div class="quote-price-skeleton w-24 shrink-0"></div>',
+                '</div>'
+            ].join('\n');
+        }
+        if (state.calculationError) {
+            return [
+                '<div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">',
+                '    <p class="text-sm font-semibold text-red-700">' + escapeHtml(state.calculationError) + '</p>',
+                '    <button type="button" id="quote-pricing-retry" class="text-sm font-bold text-[#d4af37] hover:underline self-start">Retry pricing</button>',
+                '</div>'
+            ].join('\n');
+        }
+        if (!state.calculation) {
+            return '<p class="text-sm text-[#1f271b]/55">Current prices will appear here.</p>';
+        }
+
+        const totals = state.calculation.totals;
+        const warnings = [];
+        if (totals.unpriced_lines) warnings.push(totals.unpriced_lines + ' line' + (totals.unpriced_lines === 1 ? '' : 's') + ' priced on request');
+        if (totals.unavailable_lines) warnings.push(totals.unavailable_lines + ' unavailable line' + (totals.unavailable_lines === 1 ? '' : 's'));
+
+        return [
+            '<div class="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">',
+            '    <span class="text-[#1f271b]/55">Priced subtotal</span><strong class="text-right text-[#12170f]">' + escapeHtml(formatMoney(totals.priced_subtotal)) + '</strong>',
+            '    <span class="text-[#1f271b]/55">GST (' + escapeHtml(String(Math.round(totals.gst_rate * 100))) + '%)</span><strong class="text-right text-[#12170f]">' + escapeHtml(formatMoney(totals.tax_amount)) + '</strong>',
+            totals.pricing_complete
+                ? '    <span class="pt-3 mt-1 border-t border-[#12170f]/10 font-bold text-[#12170f]">Estimated total</span><strong class="pt-3 mt-1 border-t border-[#12170f]/10 text-right text-lg text-[#12170f]">' + escapeHtml(formatMoney(totals.estimated_total)) + '</strong>'
+                : '',
+            '</div>',
+            warnings.length
+                ? '<p class="mt-4 pt-4 border-t border-[#12170f]/10 text-xs font-semibold text-[#9a7410]">' + escapeHtml(warnings.join(' · ')) + '. No grand total is shown until every line is priced.</p>'
+                : '',
+            '<p class="mt-3 text-[11px] text-[#1f271b]/45">EX-WORKS · Delivery excluded · Final availability and commercial approval are confirmed by our team.</p>'
+        ].filter(Boolean).join('\n');
+    }
+
     // ------------------------------------------------------------------
     // MARKUP — ProductRequestList + AddProductButton
     // ------------------------------------------------------------------
@@ -584,8 +680,12 @@
     // ------------------------------------------------------------------
     function submitHTML() {
         return [
+            '<section class="mb-12">',
+            '    ' + sectionHeading('03', 'Pricing Preview', 'Calculated securely'),
+            '    <div id="quote-pricing-summary" class="rounded-md border border-[#12170f]/10 bg-[#f8faf7] p-5" aria-live="polite">' + pricingSummaryHTML() + '</div>',
+            '</section>',
             '<section class="mb-4">',
-            '    ' + sectionHeading('03', 'Additional Details', 'Optional'),
+            '    ' + sectionHeading('04', 'Additional Details', 'Optional'),
             '    ' + textAreaHTML({ id: 'quote-notes', label: 'Requirements & Quantities', placeholder: 'Quantities, specifications, delivery timelines or anything else we should know.', rows: 4 }),
             '</section>',
             // The failure banner is the shape enquiries.js already uses for a
@@ -643,24 +743,81 @@
         return REFERENCE_PREFIX + '-' + new Date().getFullYear() + '-' + digits.padStart(4, '0');
     }
 
-    function successHTML(reference) {
-        return centredMessageHTML([
-            '<div class="w-14 h-14 mx-auto mb-6 rounded-full bg-[#d4af37]/10 flex items-center justify-center text-[#d4af37]">',
-            '    ' + CHECK_ICON,
+    function dateLabel(value) {
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return '';
+        return date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+    }
+
+    function printDocumentHTML(snapshot) {
+        if (!snapshot) return '';
+        const customer = snapshot.customer || {};
+        const totals = snapshot.totals || {};
+        const lines = Array.isArray(snapshot.lines) ? snapshot.lines : [];
+        const rows = lines.map(line => {
+            const unit = line.pricing_status === 'priced' ? formatMoney(line.unit_price) : 'On request';
+            const gst = line.pricing_status === 'priced' ? formatMoney(line.gst_amount) : '—';
+            const total = line.pricing_status === 'priced' ? formatMoney(line.line_total) : 'To confirm';
+            return [
+                '<tr>',
+                '    <td class="py-3 pr-3 border-b border-[#12170f]/10 align-top">' + escapeHtml(String(line.position)) + '</td>',
+                '    <td class="py-3 pr-3 border-b border-[#12170f]/10"><strong>' + escapeHtml(line.product_name || '') + '</strong><br><span class="text-[10px] text-[#1f271b]/50">' + escapeHtml(line.category_name || '') + '</span></td>',
+                '    <td class="py-3 px-2 border-b border-[#12170f]/10 text-center">' + escapeHtml(String(line.quantity)) + '</td>',
+                '    <td class="py-3 px-2 border-b border-[#12170f]/10 text-right">' + escapeHtml(unit) + '</td>',
+                '    <td class="py-3 px-2 border-b border-[#12170f]/10 text-right">' + escapeHtml(gst) + '</td>',
+                '    <td class="py-3 pl-2 border-b border-[#12170f]/10 text-right font-bold">' + escapeHtml(total) + '</td>',
+                '</tr>'
+            ].join('\n');
+        }).join('\n');
+
+        const totalBlock = totals.pricing_complete
+            ? [
+                '<div class="ml-auto w-full max-w-xs text-sm">',
+                '    <div class="flex justify-between py-1.5"><span>Subtotal</span><strong>' + escapeHtml(formatMoney(totals.priced_subtotal)) + '</strong></div>',
+                '    <div class="flex justify-between py-1.5"><span>GST (' + escapeHtml(String(Math.round(totals.gst_rate * 100))) + '%)</span><strong>' + escapeHtml(formatMoney(totals.tax_amount)) + '</strong></div>',
+                '    <div class="flex justify-between mt-2 pt-3 border-t-2 border-[#12170f] text-base"><span class="font-bold">ESTIMATED TOTAL</span><strong>' + escapeHtml(formatMoney(totals.estimated_total)) + '</strong></div>',
+                '</div>'
+            ].join('\n')
+            : '<div class="ml-auto w-full max-w-sm p-3 bg-[#fff8e6] border border-[#d4af37]/30 text-xs font-semibold">A grand total is not shown because ' + escapeHtml(String(totals.unpriced_lines || 0)) + ' line(s) require manual pricing.</div>';
+
+        return [
+            '<article class="quote-print-document mt-10 mx-auto max-w-3xl border border-[#12170f]/10 bg-white p-6 md:p-9 text-left">',
+            '    <div class="flex items-start justify-between gap-6 pb-5 border-b-4 border-[#12170f]">',
+            '        <div><img src="/assets/icons/SRK-Team-Star-Logos/primary-bgless.png" alt="SRK Team Star" class="h-14 w-auto"><p class="mt-2 text-[9px] uppercase tracking-widest text-[#9a7410]">Industrial framing machinery · hardware · production solutions</p></div>',
+            '        <div class="text-right"><p class="text-[10px] font-bold tracking-widest text-[#d4af37]">REQUEST ACKNOWLEDGEMENT</p><p class="mt-1 text-xl font-bold">' + escapeHtml(snapshot.reference || '') + '</p><p class="mt-1 text-xs text-[#1f271b]/55">' + escapeHtml(dateLabel(snapshot.created_at)) + '</p></div>',
+            '    </div>',
+            '    <div class="grid grid-cols-1 sm:grid-cols-2 gap-5 py-5 text-xs">',
+            '        <div><p class="text-[9px] font-bold tracking-widest text-[#d4af37] uppercase mb-2">Prepared for</p><p class="font-bold text-sm">' + escapeHtml(customer.business_name || '') + '</p><p>' + escapeHtml(customer.contact_name || '') + '</p><p>' + escapeHtml(customer.business_address || '') + '</p></div>',
+            '        <div class="sm:text-right"><p>' + escapeHtml(customer.email || '') + '</p><p>' + escapeHtml(customer.phone || '') + '</p><p class="mt-3"><strong>Basis:</strong> ' + escapeHtml(snapshot.commercial_basis || 'EX-WORKS') + '</p><p><strong>Delivery:</strong> Excluded</p></div>',
+            '    </div>',
+            '    <div class="overflow-x-auto">',
+            '        <table class="w-full border-collapse text-xs">',
+            '            <thead class="bg-[#12170f] text-white"><tr><th class="p-2 text-left">#</th><th class="p-2 text-left">Product</th><th class="p-2 text-center">Qty</th><th class="p-2 text-right">Unit price</th><th class="p-2 text-right">GST</th><th class="p-2 text-right">Line total</th></tr></thead>',
+            '            <tbody>' + rows + '</tbody>',
+            '        </table>',
+            '    </div>',
+            '    <div class="mt-5">' + totalBlock + '</div>',
+            snapshot.notes ? '    <div class="mt-6 pt-4 border-t border-[#12170f]/10 text-xs"><strong>Notes:</strong> <span class="whitespace-pre-wrap">' + escapeHtml(snapshot.notes) + '</span></div>' : '',
+            '    <div class="mt-7 p-4 bg-[#f8faf7] border-l-4 border-[#d4af37] text-[10px] leading-relaxed">This document acknowledges a quotation request; it is not an accepted order or staff-issued final quotation. Availability, specifications, delivery timelines, payment terms and all “On request” prices will be confirmed separately.</div>',
+            '    <div class="mt-6 pt-4 border-t border-[#12170f]/10 flex flex-col sm:flex-row sm:justify-between gap-2 text-[9px] text-[#1f271b]/55"><span>SRK TEAM STAR · GSTIN 06DOCPR1264G1Z0</span><span>srkteamstar@gmail.com · +91 90500 09442</span></div>',
+            '</article>'
+        ].filter(Boolean).join('\n');
+    }
+
+    function successHTML(reference, snapshot) {
+        return '<div class="' + SHELL + ' py-12">' + [
+            '<div class="quote-screen-only text-center">',
+            '    <div class="w-14 h-14 mx-auto mb-6 rounded-full bg-[#d4af37]/10 flex items-center justify-center text-[#d4af37]">' + CHECK_ICON + '</div>',
+            '    <h3 class="text-2xl font-bold tracking-tight text-[#12170f] mb-3">Quote request received</h3>',
+            '    <p class="text-sm text-[#1f271b]/60 max-w-md mx-auto mb-6">The preview below is generated from the server snapshot saved with your request. Our team will confirm any manual prices and final commercial terms.</p>',
+            reference ? '    <p class="text-sm mb-7"><span class="' + EYEBROW_CLASSES + '">Reference</span><br><strong class="text-xl">' + escapeHtml(reference) + '</strong></p>' : '',
+            '    <div class="flex flex-col sm:flex-row items-center justify-center gap-3">',
+            '        <button type="button" id="quote-done" class="' + PRIMARY_BUTTON_CLASSES + '">Back to Store</button>',
+            '        <button type="button" id="quote-print" class="' + SECONDARY_BUTTON_CLASSES + ' gap-2">' + PRINT_ICON + '<span>Print / Download PDF</span></button>',
+            '    </div>',
             '</div>',
-            '<h3 class="text-2xl font-bold tracking-tight text-[#12170f] mb-3">Quote request received</h3>',
-            '<p class="text-sm text-[#1f271b]/60 max-w-md mx-auto mb-8">Our team will review your requirements and contact you using the details supplied.</p>',
-            reference
-                ? '<div class="inline-flex flex-col items-center gap-1.5 px-8 py-5 border border-[#12170f]/10 rounded-sm bg-white mb-8">' +
-                  '<span class="' + EYEBROW_CLASSES + '">Reference Number</span>' +
-                  '<span class="text-xl font-bold tracking-tight text-[#12170f]">' + escapeHtml(reference) + '</span>' +
-                  '</div>'
-                : '<p class="text-sm text-[#1f271b]/50 mb-8">Quote your business name when following up and we will find your request.</p>',
-            '<div class="flex flex-col sm:flex-row items-center justify-center gap-3">',
-            '    <button type="button" id="quote-done" class="' + PRIMARY_BUTTON_CLASSES + '">Back to Store</button>',
-            '    <button type="button" id="quote-print" class="' + SECONDARY_BUTTON_CLASSES + ' gap-2">' + PRINT_ICON + '<span>Print / Download PDF</span></button>',
-            '</div>'
-        ].filter(line => line !== '').join('\n'));
+            printDocumentHTML(snapshot)
+        ].filter(Boolean).join('\n') + '</div>';
     }
 
     function formHTML() {
@@ -699,6 +856,91 @@
         const node = elementFor(request.uid);
         const summary = node && node.querySelector('.quote-summary');
         if (summary) summary.textContent = summaryText(request);
+    }
+
+    function refreshLinePricing(request) {
+        const node = elementFor(request.uid);
+        const current = node && node.querySelector('.quote-line-pricing');
+        if (current) current.outerHTML = linePricingHTML(request);
+        refreshSummary(request);
+    }
+
+    function renderPricingSummary() {
+        const summary = document.getElementById('quote-pricing-summary');
+        if (summary) summary.innerHTML = pricingSummaryHTML();
+
+        state.requests.forEach(refreshLinePricing);
+
+        const submitButton = document.getElementById('quote-submit');
+        const note = document.getElementById('quote-footer-note');
+        const blocked = state.calculation && state.calculation.can_submit === false;
+        if (submitButton && !state.submitting) submitButton.disabled = Boolean(blocked);
+        if (note) {
+            note.textContent = blocked
+                ? 'Remove unavailable products before submitting.'
+                : 'Fields marked * are required. Pricing is checked again when submitted.';
+        }
+    }
+
+    function selectedPricingRequests() {
+        return state.requests.filter(request => request.product && Number.isInteger(request.quantity) && request.quantity >= 1 && request.quantity <= 99);
+    }
+
+    function scheduleCalculation(immediate) {
+        if (!state || !overlay) return;
+        if (state.calculationTimer) window.clearTimeout(state.calculationTimer);
+        const sequence = ++state.calculationSequence;
+
+        const selected = selectedPricingRequests();
+        state.calculationError = '';
+        state.requests.forEach(request => { request.pricingError = ''; });
+
+        if (!selected.length) {
+            state.calculating = false;
+            state.calculation = null;
+            renderPricingSummary();
+            return;
+        }
+
+        state.calculating = true;
+        renderPricingSummary();
+        state.calculationTimer = window.setTimeout(() => runCalculation(selected, sequence), immediate ? 0 : CALCULATION_DEBOUNCE_MS);
+    }
+
+    async function runCalculation(selected, sequence) {
+        if (!state || !overlay) return;
+        state.calculationTimer = null;
+
+        try {
+            const response = await fetch(CALCULATE_ENDPOINT, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    items: selected.map(request => ({ product_id: request.product, quantity: request.quantity }))
+                })
+            });
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(result.error || 'Pricing could not be updated.');
+            if (!state || sequence !== state.calculationSequence) return;
+
+            selected.forEach((request, index) => {
+                if (state.requests.includes(request)) request.pricing = result.lines[index] || null;
+            });
+            state.calculation = result;
+            state.calculationError = '';
+        } catch (error) {
+            if (!state || sequence !== state.calculationSequence) return;
+            const message = error.message || 'Pricing could not be updated. Check your connection and retry.';
+            state.calculationError = message;
+            selected.forEach(request => {
+                if (state.requests.includes(request)) request.pricingError = message;
+            });
+        } finally {
+            if (state && sequence === state.calculationSequence) {
+                state.calculating = false;
+                renderPricingSummary();
+            }
+        }
     }
 
     // A root category change: the sub-category select itself may appear,
@@ -939,34 +1181,15 @@
     // server assigns `position` itself rather than trusting this order, so the
     // array order is the only thing that has to be right here.
     //
-    // Both the id and the name of each category and product go up. The id is the
-    // join back to the catalogue; the name and price are a snapshot, so a quote
-    // still reads as submitted after the product is renamed, repriced or removed.
-    // `UNCATEGORISED` is the group for products whose category was deleted or
-    // deactivated — there is no id to send, only the label the customer saw.
-    // Sourced from the picked product's own category fields — already on
-    // every row from /api/products/public — rather than the root group's.
-    // Now that a category-with-children exposes its own children, "Machine
-    // Spare Parts" on every item regardless of which child was actually
-    // picked would be a step backwards from what the picker now shows; the
-    // product's own category is what the customer actually chose down to.
-    // Falls back to the group when a product carries no category of its own
-    // (the UNCATEGORISED case: its category was deleted or deactivated,
-    // exactly what group.label already reads as "Other Products" for).
+    // IDs and quantities are the entire pricing input. Product/category names,
+    // unit prices and GST never leave this form as claims from the browser; the
+    // server resolves and snapshots all of them from the catalogue.
     function composeItems() {
         return state.requests.map(request => {
-            const group = groupFor(request.category);
             const product = productById(request.product);
 
             return {
-                category_id: product && product.category_id !== undefined && product.category_id !== null
-                    ? product.category_id
-                    : null,
-                category_name: (product && product.category_name)
-                    || (group ? group.label : UNCATEGORISED_LABEL),
                 product_id: product ? product.id : null,
-                product_name: product ? String(product.name || '') : '',
-                product_price: product && product.price !== undefined ? product.price : null,
                 quantity: request.quantity
             };
         });
@@ -1033,7 +1256,7 @@
             // The server composes the reference from the row's own created_at, so
             // it and the back office can never disagree about the year. referenceFor
             // is the fallback for a response that somehow carries only the id.
-            showSuccess(result.reference || referenceFor(result.id));
+            showSuccess(result);
         } catch (error) {
             console.error('Request a Quote: submission failed.', error);
             showFormError(error.message || 'Something went wrong. Please try again, or reach us on the contact page.');
@@ -1061,17 +1284,18 @@
         if (!style) {
             style = document.createElement('style');
             style.id = 'quote-print-styles';
-            style.textContent = '@media print{body>*:not(#quote-overlay){display:none!important}#quote-overlay{position:static!important;inset:auto!important;background:#fff!important}#quote-overlay>div{box-shadow:none!important;max-width:none!important;width:100%!important;height:auto!important}#quote-print,#quote-done{display:none!important}}';
+            style.textContent = '@page{size:A4;margin:12mm}@media print{body>*:not(#quote-overlay){display:none!important}#quote-overlay{position:static!important;inset:auto!important;background:#fff!important}#quote-overlay>div{box-shadow:none!important;max-width:none!important;width:100%!important;height:auto!important}#quote-overlay header,.quote-screen-only{display:none!important}#quote-overlay [class*="overflow-y-auto"]{overflow:visible!important;height:auto!important;max-height:none!important}.quote-print-document{display:block!important;margin:0!important;border:0!important;padding:0!important;max-width:none!important}.quote-print-document table{page-break-inside:auto}.quote-print-document tr{page-break-inside:avoid;page-break-after:auto}}';
             document.head.appendChild(style);
         }
         window.print();
     }
 
-    function showSuccess(reference) {
+    function showSuccess(result) {
         const scroll = body();
         if (!scroll) return;
 
-        scroll.innerHTML = successHTML(reference);
+        const reference = result.reference || referenceFor(result.id);
+        scroll.innerHTML = successHTML(reference, result.snapshot || null);
         scroll.scrollTop = 0;
 
         const done = document.getElementById('quote-done');
@@ -1095,6 +1319,7 @@
 
         enhance(scroll);
         wireForm();
+        scheduleCalculation(true);
 
         const first = document.getElementById('quote-business-name');
         if (first) first.focus({ preventScroll: true });
@@ -1158,7 +1383,9 @@
                 const request = requestFor(field);
                 if (request) {
                     request.quantity = Number.parseInt(field.value, 10);
+                    request.pricing = null;
                     refreshSummary(request);
+                    scheduleCalculation(false);
                 }
             }
         });
@@ -1178,6 +1405,12 @@
             const add = event.target.closest('#quote-add');
             if (add) {
                 onAdd();
+                return;
+            }
+
+            const retryPricing = event.target.closest('#quote-pricing-retry');
+            if (retryPricing) {
+                scheduleCalculation(true);
                 return;
             }
 
@@ -1216,9 +1449,11 @@
         // level up: the new category's children are not the old one's.
         request.product = '';
         request.subcategory = DIRECT_ONLY;
+        request.pricing = null;
 
         if (select.value) clearFieldError(select);
         refreshProductSection(request);
+        scheduleCalculation(false);
     }
 
     function onSubcategoryChange(select) {
@@ -1229,8 +1464,10 @@
         // Same rule as a category change: a product belongs to the
         // sub-category it was chosen from.
         request.product = '';
+        request.pricing = null;
 
         refreshProductGrid(request);
+        scheduleCalculation(false);
     }
 
     function onProductCardSelect(card) {
@@ -1239,12 +1476,14 @@
 
         const id = card.dataset.productId || '';
         request.product = id;
+        request.pricing = null;
 
         // Repaint the whole grid, not just the clicked card: the checkmark badge
         // has to come off whichever card carried it before, and only the picker
         // itself knows which one that was. Never the section — a product pick
         // cannot change which sub-category is selected.
         refreshProductGrid(request);
+        scheduleCalculation(false);
 
         if (!id) return;
 
@@ -1288,6 +1527,7 @@
         const request = blankRequest();
         state.requests.push(request);
         appendRequest(request, true);
+        scheduleCalculation(false);
     }
 
     function onRemove(button) {
@@ -1299,6 +1539,7 @@
 
         if (node) node.remove();
         renumber();
+        scheduleCalculation(false);
     }
 
     // ------------------------------------------------------------------
@@ -1339,6 +1580,7 @@
         window.srkPendingQuoteItems = [];
         state = {
             products: [], groups: [], index: null, requests: [], submitting: false,
+            calculating: false, calculation: null, calculationError: '', calculationTimer: null, calculationSequence: 0,
             initialItems: initialItems.slice(0, 12)
         };
 
@@ -1348,6 +1590,7 @@
             closeId: 'quote-close',
             header: headerHTML(),
             onClose: () => {
+                if (state && state.calculationTimer) window.clearTimeout(state.calculationTimer);
                 handle = null;
                 overlay = null;
                 state = null;

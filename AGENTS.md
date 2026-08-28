@@ -44,8 +44,8 @@ That check is the rule; this paragraph is only the reason for it.
 cd backend
 npm install && npm start          # or: npm run dev  (node --watch)
 npm run verify                    # 3 structural checks, ~1s
-npm test                          # 109 API assertions
-npm run test:browser              # 55 Playwright journeys
+npm test                          # 130 API assertions
+npm run test:browser              # 62 Playwright journeys
 npm run test:all                  # verify + both suites
 npm run build:css                 # Tailwind, ahead of time
 npm run watch:css                 # the reflex that goes with npm run dev
@@ -135,11 +135,10 @@ RLS, so live updates from the browser *require* granting `anon` a SELECT policy,
 and the anon key is public by definition. **If you ever want live updates, add
 them server-side. Never by granting `anon` a policy.**
 
-**Customer sign-in requires a password.** Registration and new-customer
-checkout store only a salted scrypt hash; login verifies it before
-`startSession()` can run. Checkout is not a second password verifier: if its
-contact details match an existing profile it refuses the order and sends the
-customer through the rate-limited sign-in door first. Profiles created during
+**Customer sign-in requires a password.** Registration stores only a salted
+scrypt hash; login verifies it before `startSession()` can run. Checkout is a
+true guest flow: contact details are frozen on the order, and it creates no
+account or session. Profiles created during
 the former identifier-only period may have no hash; they stay locked until
 their credential is reset rather than falling back to passwordless access.
 
@@ -152,8 +151,7 @@ needs that question answered, so it is not; `authLimiter` remains what keeps
 the identifier check itself from being an enumeration oracle.
 
 **Nothing can raise a role** — signup hard-codes customer, `PATCH /api/auth/me`
-refuses `role_id`, `POST /api/checkout` refuses to adopt or create a
-non-customer profile. Changing a role is a hand edit in the Supabase table
+refuses `role_id`, and checkout creates no profile. Changing a role is a hand edit in the Supabase table
 editor.
 
 **`GET /api/auth/me` answers `{ customer: null }` for any session this
@@ -212,7 +210,7 @@ is looking at. The quote overlay is the route for those.
 
 ## Migrations
 
-28 files in `backend/migrations/`, run in order. Four are worth knowing:
+31 files in `backend/migrations/`, run in order. Seven are worth knowing:
 
 - **025** puts the whole order write (header, items, frozen address, payment
   row) inside one Postgres function. **Must be run before checkout works at all.**
@@ -224,6 +222,10 @@ is looking at. The quote overlay is the route for those.
 - **028** restores `user_profiles.password_hash` idempotently. **It must be run
   before deploying the password-auth code.** Existing null hashes are locked
   and need an operator-managed credential reset.
+- **029** freezes server-priced quotation lines and commercial snapshots.
+- **030** freezes buyer, seller, tax and invoice-number fields on orders.
+- **031** makes order ownership nullable for true guest checkout and stores a
+  one-order access-token hash. **Run 029–031 in order before deploying their UI.**
 - **020** converts four money columns to `numeric(12,2)`. Written, not run.
   Take a backup first — it is a type change on live financial records.
 
@@ -261,6 +263,8 @@ deployment turns into an outage.
   as it running.
 - `GST_RATE`, `SHIPPING_FLAT`, `SHIPPING_FREE_ABOVE` are placeholders.
 - Migration **027** has not been run.
+- Migrations **029–031** must be applied before deploying the quotation,
+  invoice and guest-checkout changes.
 
 ---
 

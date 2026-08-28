@@ -105,6 +105,36 @@ async function req(cookies, method, path, body, extraHeaders) {
         !JSON.stringify(aOrders.body).includes('2 B Street') && !JSON.stringify(aOrders.body).includes('TRK-B'),
         JSON.stringify(aOrders.body).slice(0, 200));
 
+    console.log('\n=== 2A. PURCHASE INVOICES ARE OWNER-ONLY FROZEN RECORDS ===');
+    r = await req(jar(), 'GET', '/api/orders/900/invoice');
+    check('a guest cannot read an invoice', r.status === 401, JSON.stringify(r).slice(0, 100));
+
+    r = await req(custA, 'GET', '/api/orders/900/invoice');
+    check('the owner receives the formal invoice contract',
+        r.status === 200 && r.body.invoice.number === 'INV-20260201-000900' &&
+        r.body.invoice.order_reference === 'ORD-2026-900' && r.body.snapshot.complete === true,
+        JSON.stringify(r.body).slice(0, 240));
+    check('invoice line descriptions and prices come from the order snapshot',
+        r.body.items.length === 1 && r.body.items[0].description === 'Fake Machine' &&
+        r.body.items[0].unit_price === 1000 && r.body.items[0].taxable_value === 1000,
+        JSON.stringify(r.body.items));
+    check('the invoice reconciles persisted totals and split Haryana GST',
+        r.body.totals.subtotal === 1000 && r.body.totals.cgst === 90 &&
+        r.body.totals.sgst === 90 && r.body.totals.igst === 0 && r.body.totals.grand_total === 1180,
+        JSON.stringify(r.body.totals));
+    check('COD remains Pending and is not presented as money received',
+        r.body.payment.status === 'Pending' && r.body.payment.method === 'Cash on Delivery' && r.body.payment.paid === false,
+        JSON.stringify(r.body.payment));
+
+    r = await req(custA, 'GET', '/api/orders/901/invoice');
+    check('another customer\'s invoice is indistinguishable from a missing invoice',
+        r.status === 404 && !JSON.stringify(r.body).includes('B'), JSON.stringify(r));
+    r = await req(custB, 'GET', '/api/orders/901/invoice');
+    check('a settled invoice shows verified payment metadata to its owner',
+        r.status === 200 && r.body.payment.status === 'Paid' && r.body.payment.paid === true &&
+        r.body.payment.transaction_reference === 'pay_SETTLED' && r.body.payment.verified_at === '2026-02-02T00:05:00Z',
+        JSON.stringify(r.body.payment));
+
     console.log('\n=== 3. MASS ASSIGNMENT / ROLE ESCALATION ===');
     r = await req(custA, 'PATCH', '/api/auth/me', { name: 'Still A', role_id: 1, id: 100, email: 'other-role@example.test' });
     const after = await req(custA, 'GET', '/api/auth/me');
@@ -113,6 +143,9 @@ async function req(cookies, method, path, body, extraHeaders) {
     check('PATCH /api/auth/me cannot change id or email',
         after.body.customer.id === 200 && after.body.customer.email === 'a@example.test',
         JSON.stringify(after.body.customer));
+    r = await req(custA, 'GET', '/api/orders/900/invoice');
+    check('editing the profile does not rewrite the buyer frozen on the invoice',
+        r.status === 200 && r.body.buyer.name === 'Fake Customer A', JSON.stringify(r.body.buyer));
     r = await req(custA, 'GET', '/api/auth/me');
     check('still a customer after the attempt',
         r.body.customer && r.body.customer.role === 'customer', JSON.stringify(r.body.customer));
@@ -127,25 +160,45 @@ async function req(cookies, method, path, body, extraHeaders) {
     check('register cannot self-assign another role',
         r.status === 201 && r.body.customer.role === 'customer', JSON.stringify(r.body).slice(0, 140));
 
-    console.log('\n=== 4. GUEST CHECKOUT CANNOT ADOPT A NON-CUSTOMER ACCOUNT ===');
+    console.log('\n=== 4. GUEST CHECKOUT CAPTURES CONTACT WITHOUT CREATING AN ACCOUNT ===');
     const guest = jar();
     r = await req(guest, 'POST', '/api/checkout', {
         items: [{ product_id: 1, quantity: 1 }],
-        contact: { name: 'Attacker', email: 'other-role@example.test', phone: '9111111111', password: PASSWORD },
-        address: { address_line: 'x', city: 'y', state: 'z', postal_code: '111111' }
+        contact: { name: 'Guest Buyer', email: 'other-role@example.test', phone: '9111111111' },
+        address: { address_line: 'Guest Road', city: 'Gohana', state: 'Haryana', postal_code: '131301' },
+        payment_mode: 'offline', payment_method: 'Cash on Delivery'
     });
-    check('checkout naming a non-customer email is refused', r.status === 409, r.status + ' ' + JSON.stringify(r.body).slice(0, 90));
+    const guestOrderId = r.body && r.body.order_id;
+    const guestOrderToken = r.body && r.body.order_access_token;
+    check('checkout needs no password and returns one-order guest access',
+        r.status === 201 && r.body.customer === null && /^[A-Za-z0-9_-]{40,100}$/.test(guestOrderToken || ''),
+        r.status + ' ' + JSON.stringify(r.body).slice(0, 180));
     r = await req(guest, 'GET', '/api/auth/me');
-    check('...and no session was created at all', r.status === 200 && r.body.customer === null, JSON.stringify(r).slice(0, 90));
+    check('guest checkout creates no account session', r.status === 200 && r.body.customer === null, JSON.stringify(r).slice(0, 90));
 
-    console.log('\n=== 5. CHECKOUT IS NOT A SECOND SIGN-IN DOOR ===');
+    r = await req(jar(), 'GET', `/api/orders/${guestOrderId}/invoice`);
+    check('a guest invoice is private without its token', r.status === 401, JSON.stringify(r));
+    r = await req(jar(), 'GET', `/api/orders/${guestOrderId}/invoice`, undefined,
+        { 'X-Order-Access-Token': 'x'.repeat(43) });
+    check('a wrong guest token does not reveal whether the invoice exists', r.status === 404, JSON.stringify(r));
+    r = await req(jar(), 'GET', `/api/orders/${guestOrderId}/invoice`, undefined,
+        { 'X-Order-Access-Token': guestOrderToken });
+    check('the checkout token opens only that guest invoice',
+        r.status === 200 && r.body.buyer.name === 'Guest Buyer' && r.body.buyer.email === 'other-role@example.test' &&
+        !JSON.stringify(r.body).includes('guest_access_token_hash'), JSON.stringify(r.body).slice(0, 240));
+
+    console.log('\n=== 5. EXISTING CONTACT DETAILS STILL REMAIN A GUEST ORDER ===');
     const guest2 = jar();
     r = await req(guest2, 'POST', '/api/checkout', {
         items: [{ product_id: 1, quantity: 1 }],
-        contact: { name: 'Someone Else', email: 'a@example.test', phone: '9222222222', password: PASSWORD },
-        address: { address_line: 'ATTACKER ADDRESS', city: 'Nowhere', state: 'NA', postal_code: '999999' }
+        contact: { name: 'Delivery Contact', email: 'a@example.test', phone: '9222222222' },
+        address: { address_line: 'ORDER-ONLY ADDRESS', city: 'Nowhere', state: 'NA', postal_code: '999999' },
+        payment_mode: 'online'
     });
-    check('an existing customer is told to sign in first', r.status === 409 && r.body.field === 'email',
+    const guest2OrderId = r.body && r.body.order_id;
+    const guest2Token = r.body && r.body.order_access_token;
+    check('an existing account email can be used as guest contact without adopting it',
+        r.status === 201 && r.body.customer === null && r.body.order_access_token,
         r.status + ' ' + JSON.stringify(r.body).slice(0, 120));
     const guest2Profile = await req(guest2, 'GET', '/api/auth/me');
     check('...and checkout did not mint a session',
@@ -155,13 +208,17 @@ async function req(cookies, method, path, body, extraHeaders) {
     check('customer A\'s saved address is untouched',
         aProfile.body.customer.address_line === '1 A Street',
         'is now: ' + aProfile.body.customer.address_line);
+    r = await req(jar(), 'POST', `/api/orders/${guest2OrderId}/cancel`, undefined,
+        { 'X-Order-Access-Token': guest2Token });
+    check('the same guest token can cancel that unpaid order',
+        r.status === 200 && r.body.cancelled === true, JSON.stringify(r));
 
     console.log('\n=== 6. ORDER WRITES ARE ATOMIC ===');
     const beforeAtomic = await req(custA, 'GET', '/api/orders/mine');
     control.failNextAtomicCheckout();
     r = await req(jar(), 'POST', '/api/checkout', {
         items: [{ product_id: 1, quantity: 2 }],
-        contact: { name: 'Atomic Test', email: 'atomic@example.test', phone: '9333333333', password: PASSWORD },
+        contact: { name: 'Atomic Test', email: 'atomic@example.test', phone: '9333333333' },
         address: { address_line: '3 Test Street', city: 'Rajkot', state: 'Gujarat', postal_code: '360001' },
         payment_mode: 'offline', payment_method: 'Cash on Delivery'
     });
@@ -182,6 +239,24 @@ async function req(cookies, method, path, body, extraHeaders) {
         r.status === 200 && r.body.blocked.length === 1 && r.body.blocked[0].reason === 'on_request',
         JSON.stringify(r.body).slice(0, 140));
 
+    r = await req(anon, 'POST', '/api/quote-requests/calculate', {
+        items: [{ product_id: 1, quantity: 2, product_name: 'Forged name', product_price: 1, gst_rate: 0 }]
+    });
+    check('quote preview ignores browser names, prices and tax rates',
+        r.status === 200 && r.body.lines[0].product_name === 'Fake Machine' &&
+        r.body.lines[0].unit_price === 1000 && r.body.lines[0].gst_amount === 360 &&
+        r.body.totals.estimated_total === 2360,
+        JSON.stringify(r.body).slice(0, 220));
+
+    r = await req(anon, 'POST', '/api/quote-requests/calculate', {
+        items: [{ product_id: 2, quantity: 3 }]
+    });
+    check('quote preview preserves an on-request product without inventing a total',
+        r.status === 200 && r.body.can_submit === true &&
+        r.body.lines[0].pricing_status === 'on_request' &&
+        r.body.totals.pricing_complete === false && r.body.totals.estimated_total === null,
+        JSON.stringify(r.body).slice(0, 220));
+
     console.log('\n=== 8. INPUT BOUNDS ON ANONYMOUS WRITE ROUTES ===');
     r = await req(anon, 'POST', '/api/submit-form',
         { form_type: 'enquiry', full_name: 'x'.repeat(5000), email: 'e@example.test', message: 'hi' });
@@ -196,9 +271,32 @@ async function req(cookies, method, path, body, extraHeaders) {
     r = await req(anon, 'POST', '/api/quote-requests', {
         business_name: 'Quantity Test', contact_name: 'Buyer', email: 'buyer@example.test',
         business_address: 'Rajkot, Gujarat',
-        items: [{ category_name: 'Machinery', product_name: 'Fake Machine', product_id: 1, category_id: 10, quantity: 7 }]
+        items: [{ category_name: 'Forged Category', product_name: 'Forged Machine', product_price: 1, product_id: 1, category_id: 999, quantity: 7 }]
     });
-    check('a quote accepts an explicit line quantity', r.status === 200, JSON.stringify(r).slice(0, 100));
+    check('a quote accepts an explicit line quantity and returns an immutable reference',
+        r.status === 200 && /^PI-\d{4}-\d+$/.test(r.body.reference), JSON.stringify(r).slice(0, 140));
+    check('the final quote snapshot is recalculated from the catalogue',
+        r.body.snapshot && r.body.snapshot.lines[0].quantity === 7 &&
+        r.body.snapshot.lines[0].product_name === 'Fake Machine' &&
+        r.body.snapshot.lines[0].category_name === 'Machinery' &&
+        r.body.snapshot.lines[0].unit_price === 1000 &&
+        r.body.snapshot.lines[0].line_total === 8260,
+        JSON.stringify(r.body).slice(0, 240));
+
+    control.failNextQuoteRpcMissing();
+    r = await req(anon, 'POST', '/api/quote-requests', {
+        business_name: 'Compatibility Business', contact_name: 'Migration Window',
+        email: 'compatibility@example.test', business_address: 'Gohana, Haryana',
+        notes: 'Requirements and quantities supplied by the customer.',
+        items: [{ product_id: 1, quantity: 2, product_price: 1, product_name: 'Forged' }]
+    });
+    check('a quote still saves while migration 029 is waiting to be applied',
+        r.status === 200 && r.body.success === true && /^PI-\d{4}-\d+$/.test(r.body.reference),
+        JSON.stringify(r).slice(0, 180));
+    check('the compatibility write still uses the server product and price snapshot',
+        r.body.snapshot.lines[0].product_name === 'Fake Machine' &&
+        r.body.snapshot.lines[0].unit_price === 1000 && r.body.snapshot.lines[0].quantity === 2,
+        JSON.stringify(r.body.snapshot.lines[0]));
 
     console.log('\n=== 9. UNKNOWN IDENTIFIER IS FLAGGED, NOT JUST 404ed ===');
     r = await req(jar(), 'POST', '/api/auth/login', { identifier: 'nobody@example.test', password: PASSWORD });

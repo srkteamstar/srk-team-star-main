@@ -45,6 +45,8 @@ const { ORDER_STATUS_AWAITING_PAYMENT } = require('../../../shared/contracts/ord
 const { orderReference } = require('../../../shared/contracts/order-reference');
 const { gatewayPaymentRow } = require('../../payments/payments.public');
 const { orderCancelLimiter } = require('../infrastructure/order-rate-limit');
+const { buildOrderInvoice } = require('../services/order-invoice.service');
+const { accessibleOrder } = require('../services/order-access.service');
 
 /** @returns {import('express').Router} */
 function customerOrdersController() {
@@ -225,6 +227,41 @@ function customerOrdersController() {
         }
     });
 
+    // A formal invoice is a read of the frozen order record. Account orders use
+    // the customer session; guest orders use the one-order token from checkout.
+    // A mismatch always reads as 404, so ids cannot be used for discovery.
+    router.get('/api/orders/:id/invoice', async (req, res) => {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+
+        const orderId = optionalId(req.params.id);
+        if (orderId === null) return res.status(404).json({ error: 'No such invoice.' });
+
+        try {
+            const access = await accessibleOrder(req, orderId);
+            if (!access.order) return res.status(access.status).json({ error: access.error });
+            const order = access.order;
+
+            const [itemsRes, shippingRes, payment] = await Promise.all([
+                supabase.from('order_items').select('*').eq('order_id', order.id).order('id', { ascending: true }),
+                supabase.from('order_shipping_address').select('*').eq('order_id', order.id).maybeSingle(),
+                gatewayPaymentRow(order.id)
+            ]);
+
+            if (itemsRes.error) throw itemsRes.error;
+            if (shippingRes.error) throw shippingRes.error;
+
+            res.status(200).json(buildOrderInvoice({
+                order,
+                items: itemsRes.data || [],
+                shipping: shippingRes.data || null,
+                payment
+            }));
+        } catch (error) {
+            console.error('Fetch Customer Invoice Error:', error);
+            res.status(500).json({ error: 'Failed to load that invoice.' });
+        }
+    });
+
     // ---- The customer's own way out of an unpaid order --------------------------
     //
     // Until this existed, a customer who abandoned a payment had exactly one
@@ -239,26 +276,16 @@ function customerOrdersController() {
     // not this application's job. A customer cancelling their own unpaid order
     // is a different act from somebody moving an order
 
-    router.post('/api/orders/:id/cancel', orderCancelLimiter, requireCustomer, async (req, res) => {
+    router.post('/api/orders/:id/cancel', orderCancelLimiter, async (req, res) => {
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
 
         const orderId = optionalId(req.params.id);
         if (orderId === null) return res.status(404).json({ error: "No such order." });
 
         try {
-            // Filtered on the session's own profile, so this is an ownership check
-            // and a lookup in one — there is no id a customer can supply that
-            // reaches somebody else's order, and a miss is answered as "no such
-            // order" rather than "not yours", which would confirm it exists.
-            const { data: order, error } = await supabase
-                .from('orders')
-                .select('*')
-                .eq('id', orderId)
-                .eq('user_id', req.profile.id)
-                .maybeSingle();
-
-            if (error) throw error;
-            if (!order) return res.status(404).json({ error: "No such order." });
+            const access = await accessibleOrder(req, orderId);
+            if (!access.order) return res.status(access.status).json({ error: access.error });
+            const order = access.order;
 
             // Idempotent. A double-click, or a retry after a dropped response,
             // should not read as a failure for work that is already done.

@@ -165,7 +165,8 @@ test('a guest can check out with Cash on Delivery and gets a reference', async (
     await fill('#checkout-name', 'Journey Buyer');
     await fill('#checkout-phone', '9000000077');
     await fill('#checkout-email', 'journey@example.test');
-    await fill('#checkout-password', 'correct-horse-42');
+    await expect(page.locator('#checkout-password')).toHaveCount(0);
+    await expect(page.locator('#checkout-form')).toContainText('No account will be created.');
     await fill('#checkout-address', '7 Journey Road');
     await fill('#checkout-city', 'Gohana');
     await fill('#checkout-state', 'Haryana');
@@ -186,8 +187,105 @@ test('a guest can check out with Cash on Delivery and gets a reference', async (
     // says "placed" and gives the customer nothing to quote when they ring up.
     await expect(page.locator('#checkout-root')).toContainText(/ORD-\d{4}-\d+/, { timeout: 20000 });
 
+    // The confirmation now opens the formal, token-protected guest record instead of
+    // printing the cramped success notice itself.
+    await expect(page.locator('#checkout-invoice')).toHaveText(/View \/ Print Invoice/);
+    await page.locator('#checkout-invoice').click();
+
+    const invoice = page.locator('.purchase-invoice');
+    await expect(invoice).toBeVisible({ timeout: 15000 });
+    await expect(invoice).toContainText('Purchase Invoice');
+    await expect(invoice).toContainText('Fake Machine');
+    await expect(invoice).toContainText('Journey Buyer');
+    await expect(invoice).toContainText('06DOCPR1264G1Z0');
+    await expect(invoice.locator('.invoice-badge')).toHaveText('Pending');
+    await expect(invoice.locator('.invoice-totals')).toContainText('GST');
+    await expect(invoice.locator('.invoice-totals')).not.toContainText('CGST');
+    await expect(invoice.locator('.invoice-totals')).not.toContainText('SGST');
+    await expect(invoice).toContainText('Cash on Delivery');
+    await expect.poll(() => page.locator('#invoice-print span').evaluate(node => getComputedStyle(node).color))
+        .toBe('rgb(255, 255, 255)');
+
+    // Print media removes all app chrome but retains the A4 invoice and repeatable
+    // table header. The native print dialog is stubbed so the journey remains
+    // deterministic in CI.
+    await page.evaluate(() => { window.print = () => {}; });
+    await page.locator('#invoice-print').click();
+    await page.emulateMedia({ media: 'print' });
+    await expect(page.locator('#order-invoice-overlay > header')).toBeHidden();
+    await expect(page.locator('.invoice-toolbar')).toBeHidden();
+    await expect(invoice).toBeVisible();
+
     // A cart that outlives the order it became is the one wrong answer.
     await expect.poll(async () => page.evaluate(() => window.storeCart.items().length)).toBe(0);
+});
+
+test('My Orders opens the same printable invoice without accepting an order id from the page', async ({ page }) => {
+    await page.goto('/store/store.html', { waitUntil: 'domcontentloaded' });
+    const signedIn = await page.evaluate(async () => {
+        const result = await window.customerSession.signIn({
+            identifier: 'a@example.test', password: 'correct-horse-42'
+        });
+        return result.ok;
+    });
+    expect(signedIn).toBe(true);
+
+    await page.evaluate(() => {
+        const panel = document.createElement('div');
+        panel.id = 'invoice-history-test-panel';
+        document.body.appendChild(panel);
+        return window.myOrders.renderPanel(panel);
+    });
+
+    await page.locator('#invoice-history-test-panel .orders-toggle').first().click();
+    const historyButton = page.locator('#invoice-history-test-panel [data-view-invoice="900"]');
+    await expect(historyButton).toBeVisible({ timeout: 15000 });
+    await historyButton.click();
+
+    const invoice = page.locator('.purchase-invoice');
+    await expect(invoice).toBeVisible({ timeout: 15000 });
+    await expect(invoice).toContainText('INV-20260201-000900');
+    await expect(invoice).toContainText('ORD-2026-900');
+    await expect(invoice.locator('.invoice-badge')).toHaveText('Pending');
+});
+
+test('a long invoice prints across multiple A4 pages with repeating table headings', async ({ page }) => {
+    await page.goto('/store/store.html', { waitUntil: 'domcontentloaded' });
+    await page.evaluate(async () => {
+        await window.customerSession.signIn({
+            identifier: 'a@example.test', password: 'correct-horse-42'
+        });
+        window.orderInvoice.open(900);
+    });
+    await page.locator('.purchase-invoice').waitFor({ state: 'visible', timeout: 15000 });
+
+    // The fixture has one real frozen line. Repeat that rendered row only to
+    // exercise the print engine with a large order; no API or calculation is
+    // replaced, and the original invoice remains the source of the markup.
+    await page.locator('.invoice-table tbody').evaluate(body => {
+        const row = body.querySelector('tr');
+        for (let index = 2; index <= 55; index += 1) {
+            const copy = row.cloneNode(true);
+            copy.children[0].textContent = String(index);
+            body.appendChild(copy);
+        }
+    });
+    await page.emulateMedia({ media: 'print' });
+
+    const printRules = await page.evaluate(() => ({
+        head: getComputedStyle(document.querySelector('.invoice-table thead')).display,
+        rowBreak: getComputedStyle(document.querySelector('.invoice-table tbody tr')).breakInside,
+        toolbar: getComputedStyle(document.querySelector('.invoice-toolbar')).display
+    }));
+    expect(printRules.head).toBe('table-header-group');
+    expect(['avoid', 'avoid-page']).toContain(printRules.rowBreak);
+    expect(printRules.toolbar).toBe('none');
+
+    const pdf = await page.pdf({ format: 'A4', printBackground: true, preferCSSPageSize: true });
+    const pageObjects = (pdf.toString('latin1').match(/\/Type\s*\/Page\b/g) || []).length;
+    const pageTreeCounts = [...pdf.toString('latin1').matchAll(/\/Count\s+(\d+)/g)]
+        .map(match => Number(match[1]));
+    expect(Math.max(pageObjects, ...pageTreeCounts)).toBeGreaterThan(1);
 });
 
 // ---------------------------------------------------------------------------
@@ -216,10 +314,56 @@ test('a basket handed to the quote form arrives with its quantities', async ({ p
     await expect(quantity).toBeVisible({ timeout: 15000 });
     await expect(quantity).toHaveValue('4');
 
+    // The browser sends only id + quantity; the visible amount arrives from the
+    // server calculator and includes GST. Changing the quantity is debounced,
+    // and must not repaint unrelated business fields.
+    await expect(page.locator('#quote-pricing-summary')).toContainText('₹ 4,000', { timeout: 15000 });
+    await page.locator('#quote-business-name').fill('Draft Business');
+    await quantity.fill('2');
+    await expect(page.locator('#quote-pricing-summary')).toContainText('₹ 2,360', { timeout: 15000 });
+    await expect(page.locator('#quote-business-name')).toHaveValue('Draft Business');
+
     // Consumed: opening the form again offers a blank request, not the same
     // basket a second time.
     const leftOver = await page.evaluate(() => sessionStorage.getItem('srk_pending_quote'));
     expect(leftOver).toBeNull();
+});
+
+test('a submitted quote request produces a clean printable server snapshot', async ({ page }) => {
+    await seedGuestCart(page, [CART_LINE]);
+    await page.evaluate(() => window.storeOverlay.pendingQuote.put([{ product_id: '1', quantity: 1 }]));
+    await page.goto('/store/store.html#quote');
+    await page.reload({ waitUntil: 'domcontentloaded' });
+
+    await expect(page.locator('#quote-form')).toBeVisible({ timeout: 15000 });
+    await page.locator('#quote-business-name').fill('Printable Business');
+    await page.locator('#quote-contact-name').fill('Buyer Person');
+    await page.locator('#quote-email').fill('print@example.test');
+    await page.locator('#quote-business-address').fill('Gohana, Haryana 131301');
+    await expect(page.locator('#quote-pricing-summary')).toContainText('₹ 1,180', { timeout: 15000 });
+
+    await page.locator('#quote-submit').click();
+
+    const document = page.locator('.quote-print-document');
+    await expect(document).toBeVisible({ timeout: 15000 });
+    await expect(document).toContainText(/PI-\d{4}-\d+/);
+    await expect(document).toContainText('REQUEST ACKNOWLEDGEMENT');
+    await expect(document).toContainText('Fake Machine');
+    await expect(document).toContainText('₹ 1,180');
+    await expect(document).toContainText('not an accepted order');
+
+    await page.locator('#quote-print').hover();
+    await expect.poll(() => page.locator('#quote-print span').evaluate(node => getComputedStyle(node).color))
+        .toBe('rgb(255, 255, 255)');
+
+    // The print-only stylesheet is installed by the button itself. Stub the
+    // native dialog, click the real control, and verify the screen chrome drops
+    // out while the A4 document remains.
+    await page.evaluate(() => { window.print = () => {}; });
+    await page.locator('#quote-print').click();
+    await page.emulateMedia({ media: 'print' });
+    await expect(page.locator('.quote-screen-only')).toBeHidden();
+    await expect(document).toBeVisible();
 });
 
 // ---------------------------------------------------------------------------
@@ -238,16 +382,13 @@ test('an untouched checkout field is not stored as an empty draft value', async 
         field.value = 'Only The Name';
         field.dispatchEvent(new Event('input', { bubbles: true }));
     });
-    await page.locator('#checkout-password').fill('must-not-be-stored');
-
     const draft = await page.evaluate(() => JSON.parse(sessionStorage.getItem('srk_checkout_draft') || '{}'));
 
     expect(draft.name).toBe('Only The Name');
     expect(Object.prototype.hasOwnProperty.call(draft, 'phone'),
         'an untouched field must not be stored as an empty string').toBe(false);
     expect(Object.prototype.hasOwnProperty.call(draft, 'city')).toBe(false);
-    expect(Object.prototype.hasOwnProperty.call(draft, 'password'),
-        'a checkout draft must never persist a password').toBe(false);
+    expect(await page.locator('#checkout-password').count(), 'guest checkout must not ask for a password').toBe(0);
 });
 
 // ---------------------------------------------------------------------------

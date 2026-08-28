@@ -14,7 +14,12 @@
  * WHO HOLDS WHAT
  *   modules/categories   countProductsByCategory
  *   modules/checkout     findActiveProductsByIds
+ *   modules/quotes       findProductsForQuoteByIds
  */
-const { countProductsByCategory, findActiveProductsByIds } = require('./infrastructure/product.repository');
+const {
+    countProductsByCategory,
+    findActiveProductsByIds,
+    findProductsForQuoteByIds
+} = require('./infrastructure/product.repository');
 
-module.exports = { countProductsByCategory, findActiveProductsByIds };
+module.exports = { countProductsByCategory, findActiveProductsByIds, findProductsForQuoteByIds };

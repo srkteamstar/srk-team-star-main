@@ -20,6 +20,7 @@
     "GET /api/cart",
     "GET /api/categories/public",
     "GET /api/orders/mine",
+    "GET /api/orders/:id/invoice",
     "GET /api/products/public",
     "GET /api/projects/public",
     "PATCH /api/auth/me",
@@ -31,6 +32,7 @@
     "POST /api/orders/:id/cancel",
     "POST /api/payments/verify",
     "POST /api/quote-requests",
+    "POST /api/quote-requests/calculate",
     "POST /api/submit-form",
     "POST /api/webhooks/razorpay",
     "PUT /api/cart"

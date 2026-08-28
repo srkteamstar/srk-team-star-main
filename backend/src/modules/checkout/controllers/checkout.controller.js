@@ -17,30 +17,29 @@
  * amount sent to the gateway is read back off our own row rather than taken
  * from a request body.
  *
- * A GUEST CHECKOUT CREATES THE ACCOUNT THE ORDER NEEDS, because orders.user_id
- * is NOT NULL. It requires a password for that new account and refuses to
- * adopt any existing profile: returning customers authenticate through the
- * rate-limited auth door before checking out. A session this application did
- * not open is treated as a guest for the same reason.
+ * A guest checkout stores contact details on the frozen order snapshot. It
+ * creates neither an account nor a session. A random per-order access token is
+ * returned to that browser so the guest can read the invoice or cancel an
+ * unpaid order without making those records public.
  */
 const express = require('express');
 const { supabase } = require('../../../core/database/supabase');
 const razorpay = require('../../../core/gateways/razorpay');
 const { PAYMENTS_ENABLED } = require('../../../core/config/payments');
 const { GST_RATE, SHIPPING_FLAT, SHIPPING_FREE_ABOVE } = require('../../../core/config/commercial');
-const { sessionScope, sessionProfile, isBlocked, BLOCKED_MESSAGE, roleNameById, roleIdByName } = require('../../../core/security/guards');
-const { EMAIL_PATTERN, MAX_LENGTHS, tooLong, trimmed } = require('../../../shared/validation');
+const { sessionScope, sessionProfile, isBlocked, BLOCKED_MESSAGE } = require('../../../core/security/guards');
+const { EMAIL_PATTERN, trimmed } = require('../../../shared/validation');
 const { CURRENCY, PAYMENT_STATUS, PAYMENT_METHODS, PAYMENT_MODES } = require('../../../shared/contracts/payment');
+const { SELLER } = require('../../../shared/contracts/seller');
+const { gstTreatment } = require('../../../shared/indian-gst');
 const { ORDER_STATUS_AWAITING_PAYMENT, ORDER_STATUS_PLACED } = require('../../../shared/contracts/order-status');
 const { orderReference } = require('../../../shared/contracts/order-reference');
+const { createOrderAccessToken } = require('../../../shared/order-access-token');
 const {
     normalizePhone,
     normalizeEmail,
     addressForUser,
-    publicProfile,
-    startSession,
-    passwordProblem,
-    hashCustomerPassword
+    publicProfile
 } = require('../../auth/auth.public');
 const { priceCheckout } = require('../services/price-checkout.service');
 const { summaryLimiter, checkoutLimiter } = require('../infrastructure/checkout-rate-limit');
@@ -182,8 +181,7 @@ function checkoutController() {
             // correct and is not a way in: the adoption guard below refuses a
             // non-customer profile, so typing that account's own email is
             // answered, not obeyed.
-            let profile = sessionScope(req) !== 'customer' ? null : await sessionProfile(req);
-            let startedSession = false;
+            const profile = sessionScope(req) !== 'customer' ? null : await sessionProfile(req);
 
             // This route reads the session itself rather than sitting behind
             // requireCustomer (it has to serve guests), so the suspension check
@@ -193,13 +191,13 @@ function checkoutController() {
                 return res.status(403).json({ error: BLOCKED_MESSAGE });
             }
 
+            let buyer;
             if (!profile) {
                 const name = trimmed(body.contact && body.contact.name);
                 const email = normalizeEmail(body.contact && body.contact.email);
                 const phone = trimmed(body.contact && body.contact.phone);
                 const company = trimmed(body.contact && body.contact.company);
                 const digits = normalizePhone(phone);
-                const password = body.contact && body.contact.password;
 
                 if (!name) return res.status(400).json({ field: 'name', error: "Enter your name." });
                 if (!email || !EMAIL_PATTERN.test(email)) {
@@ -208,66 +206,16 @@ function checkoutController() {
                 if (digits.length < 7) {
                     return res.status(400).json({ field: 'phone', error: "Enter a phone number we can reach you on." });
                 }
-                const passwordError = passwordProblem(password);
-                if (passwordError) return res.status(400).json({ field: 'password', error: passwordError });
-
-                // orders.user_id is NOT NULL, so there is no such thing as an
-                // order with nobody attached. A guest checkout therefore creates
-                // the account it needs — which is also the only way the customer
-                // can be shown this order again afterwards.
-                const [byEmail, byPhone] = await Promise.all([
-                    supabase.from('user_profiles').select('*').eq('email', email).maybeSingle(),
-                    supabase.from('user_profiles').select('*').eq('phone_normalized', digits).maybeSingle()
-                ]);
-                if (byEmail.error) throw byEmail.error;
-                if (byPhone.error) throw byPhone.error;
-
-                profile = byEmail.data || byPhone.data || null;
-
-                // CHECKOUT IS NOT A SECOND PASSWORD VERIFIER. If this contact
-                // block belongs to an existing profile, the customer must use
-                // POST /api/auth/login first. That keeps all password guessing
-                // behind authLimiter and prevents checkoutLimiter from becoming
-                // a second attempt budget against the same credential.
-                if (profile) {
-                    const matchedRole = await roleNameById(profile.role_id);
-                    if (matchedRole && matchedRole !== 'customer') {
-                        return res.status(409).json({
-                            field: 'email',
-                            error: "That account cannot check out as a guest. Sign in first, then place the order."
-                        });
-                    }
-
-                    // Same reasoning one level down: adopting is a session
-                    // grant, and a suspended account must not get one through
-                    // the form that asks for the least.
-                    if (isBlocked(profile)) {
-                        return res.status(403).json({ field: 'email', error: BLOCKED_MESSAGE });
-                    }
-
-                    return res.status(409).json({
-                        field: byEmail.data ? 'email' : 'phone',
-                        error: "That account already exists. Sign in with its password before checking out."
-                    });
-                }
-
-                const row = {
-                    full_name: name,
-                    email: email,
-                    phone_number: phone,
-                    phone_normalized: digits,
-                    company: company || null,
-                    password_hash: await hashCustomerPassword(password)
+                buyer = { name, company: company || null, email, phone };
+            } else {
+                // A signed-in customer's account remains authoritative. Posted
+                // contact fields cannot rewrite or impersonate the account.
+                buyer = {
+                    name: profile.full_name,
+                    company: profile.company || null,
+                    email: profile.email,
+                    phone: profile.phone_number
                 };
-                const customerRole = await roleIdByName('customer');
-                if (customerRole !== null) row.role_id = customerRole;
-
-                const created = await supabase.from('user_profiles').insert([row]).select().single();
-                if (created.error) throw created.error;
-                profile = created.data;
-
-                await startSession(req, profile.id);
-                startedSession = true;
             }
 
             // ---- 3. Keep the saved address current.
@@ -276,24 +224,25 @@ function checkoutController() {
             // and is what a parcel follows; failing to update the customer's
             // convenience copy must not lose an order that is otherwise good.
             //
-            // Only a signed-in customer or a newly created password account can
-            // reach this write. An existing profile submitted by a guest was
-            // refused above, so public contact fields cannot rewrite its address.
-            try {
-                const existing = await addressForUser(profile.id);
-                const saved = {
-                    user_id: profile.id,
-                    full_address: addressLine, city: city, state: state,
-                    country: country, zip_code: postal
-                };
-                if (existing) {
-                    saved.updated_at = new Date().toISOString();
-                    await supabase.from('shipping_addresses').update(saved).eq('id', existing.id);
-                } else {
-                    await supabase.from('shipping_addresses').insert([saved]);
+            // Guest contact information belongs only to the order. A signed-in
+            // customer still gets the convenience of an updated saved address.
+            if (profile) {
+                try {
+                    const existing = await addressForUser(profile.id);
+                    const saved = {
+                        user_id: profile.id,
+                        full_address: addressLine, city: city, state: state,
+                        country: country, zip_code: postal
+                    };
+                    if (existing) {
+                        saved.updated_at = new Date().toISOString();
+                        await supabase.from('shipping_addresses').update(saved).eq('id', existing.id);
+                    } else {
+                        await supabase.from('shipping_addresses').insert([saved]);
+                    }
+                } catch (addressError) {
+                    console.error("Saved-address update failed (order continues):", addressError);
                 }
-            } catch (addressError) {
-                console.error("Saved-address update failed (order continues):", addressError);
             }
 
             // ---- 4. Write the complete order atomically.
@@ -307,14 +256,31 @@ function checkoutController() {
                 throw new Error(`Refusing to write a payment row for an unrepresentable total: ${priced.totals.total}`);
             }
 
+            const guestAccess = profile ? null : createOrderAccessToken();
             const created = await supabase.rpc('create_store_order', {
-                p_user_id: profile.id,
+                p_user_id: profile ? profile.id : null,
                 p_order: {
+                    guest_access_token_hash: guestAccess ? guestAccess.hash : null,
                     amount: priced.totals.subtotal,
                     shipping_amount: priced.totals.shipping,
                     tax_amount: priced.totals.tax,
                     net_amount: priced.totals.total,
-                    status: payOnline ? ORDER_STATUS_AWAITING_PAYMENT : ORDER_STATUS_PLACED
+                    status: payOnline ? ORDER_STATUS_AWAITING_PAYMENT : ORDER_STATUS_PLACED,
+                    currency: CURRENCY,
+                    tax_rate: GST_RATE,
+                    tax_type: gstTreatment(SELLER.state, state),
+                    place_of_supply: state,
+                    buyer_name: buyer.name,
+                    buyer_company: buyer.company,
+                    buyer_email: buyer.email,
+                    buyer_phone: buyer.phone,
+                    seller_legal_name: SELLER.legal_name,
+                    seller_trade_name: SELLER.trade_name,
+                    seller_gstin: SELLER.gstin,
+                    seller_address: SELLER.address,
+                    seller_email: SELLER.email,
+                    seller_phone: SELLER.phone,
+                    seller_state: SELLER.state
                 },
                 p_items: priced.lines.map(line => ({
                     product_id: line.product_id,
@@ -405,8 +371,8 @@ function checkoutController() {
                 reference: reference,
                 order_id: order.id,
                 totals: priced.totals,
-                signed_in: startedSession || undefined,
-                customer: await publicProfile(profile),
+                order_access_token: guestAccess ? guestAccess.token : undefined,
+                customer: profile ? await publicProfile(profile) : null,
                 // Absent entirely when the gateway is off, so a client built
                 // against the offline flow sees exactly the response it always did.
                 payment: payment || undefined

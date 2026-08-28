@@ -60,6 +60,20 @@ const failNextAtomicCheckout = () => {
     write(state);
 };
 
+const failNextQuoteRpcMissing = () => {
+    const state = read();
+    state.failNextQuoteRpcMissing = true;
+    write(state);
+};
+
+const consumeQuoteRpcMissing = () => {
+    const state = read();
+    if (!state.failNextQuoteRpcMissing) return false;
+    delete state.failNextQuoteRpcMissing;
+    write(state);
+    return true;
+};
+
 const consumeAtomicCheckoutFailure = () => {
     const state = read();
     if (!state.failNextAtomicCheckout) return false;
@@ -75,4 +89,9 @@ const paidOrders = () => {
 
 const reset = () => write({});
 
-module.exports = { controlPath, read, write, setPaidOrders, paidOrders, failNextAtomicCheckout, consumeAtomicCheckoutFailure, reset };
+module.exports = {
+    controlPath, read, write, setPaidOrders, paidOrders,
+    failNextAtomicCheckout, consumeAtomicCheckoutFailure,
+    failNextQuoteRpcMissing, consumeQuoteRpcMissing,
+    reset
+};
