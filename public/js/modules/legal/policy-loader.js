@@ -15,7 +15,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // POLICY TEMPLATES & DATA
     // ------------------------------------------------------------------
     const heading = title => `<h1 class="text-3xl font-extrabold mb-8 text-[#12170F] border-b border-[#420C14]/20 pb-4">${title}</h1>`;
-    const contactBlock = `<strong>Email:</strong> srkteamstar@gmail.com<br><strong>Phone:</strong> +91 90500 09442<br><strong>Address:</strong> Behind New ITI, Rohtak Road, Near Water Busting Station, Gohana, Sonipat, Haryana 131301, India.`;
+    const contactBlock = `<strong>Email:</strong> srkteamstar@gmail.com<br><strong>Phone:</strong> +91 90500 09442<br><strong>Address:</strong> Behind New ITI, Rohtak Road, Near Water Boosting Station, Gohana, Sonipat, Haryana 131301, India.`;
 
     const policyTemplates = {
         home: `
@@ -58,7 +58,7 @@ document.addEventListener("DOMContentLoaded", () => {
         shipping: `
             ${heading('Shipping & Fulfilment Policy')}
             <section class="max-w-4xl text-[#1F271B] text-base leading-relaxed">
-                <p class="mb-6">Delivery cost and timing depend on the product, destination, stock, installation needs and freight availability. The checkout summary or written quotation shows the applicable charge before the order is placed; a quotation may be required for machinery, bulk and export orders.</p>
+                <p class="mb-6">GST is charged at 18%. Delivery is free for purchases of ₹50,000 or more. Below that threshold, the delivery charge is confirmed with the order and collected at the point of delivery rather than included in the website payment. A quotation may be required for machinery, bulk and export orders.</p>
                 <h2 class="text-xl font-bold mt-8 mb-3 text-[#12170F]">Processing and delivery estimates</h2><p class="mb-6">We confirm dispatch or production timing for the particular order. Any date or transit window we provide is an estimate unless the order confirmation expressly says it is guaranteed. We will communicate material delays and the options available under applicable law.</p>
                 <h2 class="text-xl font-bold mt-8 mb-3 text-[#12170F]">Domestic and international delivery</h2><p class="mb-6">Domestic orders are sent using a suitable carrier for the goods and destination. International orders are accepted only after destination, documentation, freight, duties and delivery responsibilities are agreed. Customs charges and importer responsibilities will be identified in the quotation or agreed trade terms rather than assumed by this policy.</p>
                 <h2 class="text-xl font-bold mt-8 mb-3 text-[#12170F]">Tracking, loss and damage</h2><p class="mb-6">Tracking or dispatch details are provided when available. Inspect the shipment promptly and contact us as soon as reasonably possible about loss, damage, shortage or a wrong item. Photographs and packaging can help us investigate, but an arbitrary reporting deadline does not remove rights that apply by law.</p>

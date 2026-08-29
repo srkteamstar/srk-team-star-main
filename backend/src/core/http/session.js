@@ -6,6 +6,8 @@
  * core/security/guards.js. Nothing else may set it.
  */
 const session = require('express-session');
+const { isProduction } = require('../config/runtime');
+const { SupabaseSessionStore } = require('./supabase-session-store');
 
 // THE SESSION STORE
 //
@@ -26,6 +28,10 @@ if (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 32) {
 
 const sessionMiddleware = session({
     secret: process.env.SESSION_SECRET,
+    // A serverless deployment can move consecutive requests between isolated
+    // processes. Production sessions therefore live in Postgres; local
+    // development keeps the dependency-free MemoryStore for fast restarts.
+    store: isProduction ? new SupabaseSessionStore() : undefined,
     // Named for the site rather than for a role. Nothing about a cookie name
     // should hint at what the session behind it may be entitled to.
     name: 'srk_sid',
@@ -44,7 +50,8 @@ const sessionMiddleware = session({
         // 30 days. Credentials are checked when the session is opened; role
         // and suspension are still re-read on every protected request.
         maxAge: 30 * 24 * 60 * 60 * 1000
-    }
+    },
+    rolling: true
 });
 
 module.exports = { sessionMiddleware };

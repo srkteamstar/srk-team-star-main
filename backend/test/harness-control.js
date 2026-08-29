@@ -66,6 +66,20 @@ const failNextQuoteRpcMissing = () => {
     write(state);
 };
 
+const failNextGatewayPaymentFetch = () => {
+    const state = read();
+    state.failNextGatewayPaymentFetch = true;
+    write(state);
+};
+
+const consumeGatewayPaymentFetchFailure = () => {
+    const state = read();
+    if (!state.failNextGatewayPaymentFetch) return false;
+    delete state.failNextGatewayPaymentFetch;
+    write(state);
+    return true;
+};
+
 const consumeQuoteRpcMissing = () => {
     const state = read();
     if (!state.failNextQuoteRpcMissing) return false;
@@ -93,5 +107,6 @@ module.exports = {
     controlPath, read, write, setPaidOrders, paidOrders,
     failNextAtomicCheckout, consumeAtomicCheckoutFailure,
     failNextQuoteRpcMissing, consumeQuoteRpcMissing,
+    failNextGatewayPaymentFetch, consumeGatewayPaymentFetchFailure,
     reset
 };

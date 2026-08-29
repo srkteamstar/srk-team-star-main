@@ -48,7 +48,10 @@ const corsMiddleware = cors({
     // elsewhere, a list that had drifted would fail the cart alone, with a
     // preflight error and every other route working.
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE'],
-    allowedHeaders: ['Content-Type'],
+    // Guest invoice and cancellation requests carry their one-order bearer
+    // token in this header. Without it, a split frontend/API deployment passes
+    // ordinary checkout and then fails only when the guest returns to the order.
+    allowedHeaders: ['Content-Type', 'X-Order-Access-Token'],
     maxAge: 600
 });
 

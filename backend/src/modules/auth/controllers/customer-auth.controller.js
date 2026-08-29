@@ -45,6 +45,12 @@ function customerAuthController() {
         const phoneDigits = normalizePhone(phone);
         const password = req.body && req.body.password;
 
+        const lengthError = tooLong('Name', name, MAX_LENGTHS.name)
+            || tooLong('Email', email, MAX_LENGTHS.email)
+            || tooLong('Phone', phone, MAX_LENGTHS.phone)
+            || tooLong('Company', company, MAX_LENGTHS.company);
+        if (lengthError) return res.status(400).json({ error: lengthError });
+
         if (!name) return res.status(400).json({ field: 'name', error: "Enter your name." });
         if (!email) return res.status(400).json({ field: 'email', error: "Enter an email address." });
         if (!EMAIL_PATTERN.test(email)) {
@@ -115,6 +121,12 @@ function customerAuthController() {
         const identifier = trimmed(req.body.identifier);
         const password = req.body && req.body.password;
 
+        const identifierLimit = looksLikeEmail(identifier) ? MAX_LENGTHS.email : MAX_LENGTHS.phone;
+        const identifierLengthError = tooLong('Email or phone', identifier, identifierLimit);
+        if (identifierLengthError) {
+            return res.status(400).json({ field: 'identifier', error: identifierLengthError });
+        }
+
         if (!identifier) {
             return res.status(400).json({ field: 'identifier', error: "Enter your email or phone number." });
         }
@@ -166,7 +178,7 @@ function customerAuthController() {
             // the identifier check itself from being an enumeration oracle.
             const role = await roleNameById(profile.role_id);
 
-            if (role && role !== 'customer') {
+            if (role !== 'customer') {
                 return res.status(403).json({
                     field: 'identifier',
                     error: "That account cannot be used to sign in here."
@@ -247,6 +259,10 @@ function customerAuthController() {
                 return res.status(200).json({ customer: null });
             }
 
+            if (!profile || await roleNameById(profile.role_id) !== 'customer') {
+                return res.status(200).json({ customer: null });
+            }
+
             res.status(200).json({ customer: await publicProfile(profile) });
         } catch (error) {
             console.error("Session Read Error:", error);
@@ -270,18 +286,27 @@ function customerAuthController() {
         if (has('name')) {
             const name = trimmed(body.name);
             if (!name) return res.status(400).json({ field: 'name', error: "Enter your name." });
+            const lengthError = tooLong('Name', name, MAX_LENGTHS.name);
+            if (lengthError) return res.status(400).json({ field: 'name', error: lengthError });
             profileUpdate.full_name = name;
         }
         if (has('phone')) {
             const phone = trimmed(body.phone);
             const digits = normalizePhone(phone);
+            const lengthError = tooLong('Phone', phone, MAX_LENGTHS.phone);
+            if (lengthError) return res.status(400).json({ field: 'phone', error: lengthError });
             if (digits.length < 7) {
                 return res.status(400).json({ field: 'phone', error: "Enter a phone number we can reach you on." });
             }
             profileUpdate.phone_number = phone;
             profileUpdate.phone_normalized = digits;
         }
-        if (has('company')) profileUpdate.company = trimmed(body.company) || null;
+        if (has('company')) {
+            const company = trimmed(body.company);
+            const lengthError = tooLong('Company', company, MAX_LENGTHS.company);
+            if (lengthError) return res.status(400).json({ field: 'company', error: lengthError });
+            profileUpdate.company = company || null;
+        }
 
         const addressKeys = ['address_line', 'city', 'state', 'postal_code', 'country'];
         const touchesAddress = addressKeys.some(has);
@@ -312,6 +337,13 @@ function customerAuthController() {
                     country: has('country') ? trimmed(body.country) : (existing ? existing.country : ''),
                     zip_code: has('postal_code') ? trimmed(body.postal_code) : (existing ? existing.zip_code : '')
                 };
+
+                const addressLengthError = tooLong('Street address', merged.full_address, MAX_LENGTHS.address)
+                    || tooLong('City', merged.city, MAX_LENGTHS.city)
+                    || tooLong('State', merged.state, MAX_LENGTHS.state)
+                    || tooLong('PIN code', merged.zip_code, MAX_LENGTHS.postal_code)
+                    || tooLong('Country', merged.country, MAX_LENGTHS.country);
+                if (addressLengthError) return res.status(400).json({ error: addressLengthError });
 
                 if (!merged.full_address) {
                     return res.status(400).json({ field: 'address_line', error: "Enter a street address." });

@@ -267,7 +267,12 @@
     }
 
     function tabForHash() {
-        const requested = decodeURIComponent(window.location.hash.slice(1)).trim();
+        let requested;
+        try {
+            requested = decodeURIComponent(window.location.hash.slice(1)).trim();
+        } catch (error) {
+            requested = '';
+        }
         if (!requested) return null;
 
         const exact = document.querySelector('.category-btn[data-slug="' + CSS.escape(requested) + '"]');

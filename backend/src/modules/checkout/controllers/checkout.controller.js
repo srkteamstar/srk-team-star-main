@@ -26,9 +26,9 @@ const express = require('express');
 const { supabase } = require('../../../core/database/supabase');
 const razorpay = require('../../../core/gateways/razorpay');
 const { PAYMENTS_ENABLED } = require('../../../core/config/payments');
-const { GST_RATE, SHIPPING_FLAT, SHIPPING_FREE_ABOVE } = require('../../../core/config/commercial');
-const { sessionScope, sessionProfile, isBlocked, BLOCKED_MESSAGE } = require('../../../core/security/guards');
-const { EMAIL_PATTERN, trimmed } = require('../../../shared/validation');
+const { GST_RATE } = require('../../../core/config/commercial');
+const { sessionScope, sessionProfile, isBlocked, BLOCKED_MESSAGE, roleNameById } = require('../../../core/security/guards');
+const { EMAIL_PATTERN, MAX_LENGTHS, tooLong, trimmed } = require('../../../shared/validation');
 const { CURRENCY, PAYMENT_STATUS, PAYMENT_METHODS, PAYMENT_MODES } = require('../../../shared/contracts/payment');
 const { SELLER } = require('../../../shared/contracts/seller');
 const { gstTreatment } = require('../../../shared/indian-gst');
@@ -145,6 +145,13 @@ function checkoutController() {
         if (!state) return res.status(400).json({ field: 'state', error: "Enter a state." });
         if (!postal) return res.status(400).json({ field: 'postal_code', error: "Enter a PIN code." });
 
+        const addressLengthError = tooLong('Street address', addressLine, MAX_LENGTHS.address)
+            || tooLong('City', city, MAX_LENGTHS.city)
+            || tooLong('State', state, MAX_LENGTHS.state)
+            || tooLong('PIN code', postal, MAX_LENGTHS.postal_code)
+            || tooLong('Country', country, MAX_LENGTHS.country);
+        if (addressLengthError) return res.status(400).json({ error: addressLengthError });
+
         try {
             // ---- 1. Price it. Before anything is written, and from the database.
             const priced = await priceCheckout(body.items);
@@ -181,7 +188,11 @@ function checkoutController() {
             // correct and is not a way in: the adoption guard below refuses a
             // non-customer profile, so typing that account's own email is
             // answered, not obeyed.
-            const profile = sessionScope(req) !== 'customer' ? null : await sessionProfile(req);
+            let profile = sessionScope(req) !== 'customer' ? null : await sessionProfile(req);
+
+            if (profile && await roleNameById(profile.role_id) !== 'customer') {
+                profile = null;
+            }
 
             // This route reads the session itself rather than sitting behind
             // requireCustomer (it has to serve guests), so the suspension check
@@ -198,6 +209,12 @@ function checkoutController() {
                 const phone = trimmed(body.contact && body.contact.phone);
                 const company = trimmed(body.contact && body.contact.company);
                 const digits = normalizePhone(phone);
+
+                const contactLengthError = tooLong('Name', name, MAX_LENGTHS.name)
+                    || tooLong('Email', email, MAX_LENGTHS.email)
+                    || tooLong('Phone', phone, MAX_LENGTHS.phone)
+                    || tooLong('Company', company, MAX_LENGTHS.company);
+                if (contactLengthError) return res.status(400).json({ error: contactLengthError });
 
                 if (!name) return res.status(400).json({ field: 'name', error: "Enter your name." });
                 if (!email || !EMAIL_PATTERN.test(email)) {

@@ -107,14 +107,13 @@ const isBlocked = (profile) => !!profile && profile.is_blocked === true;
 
 const BLOCKED_MESSAGE = "This account has been suspended. Contact us if you think that is a mistake.";
 
-// The scope a session was opened with. Absent reads as a customer: every
-// session this process issues is a storefront session by construction, and
-// treating an unscoped one as suspect would sign out every shopper on deploy
-// for no gain. Any OTHER scope has to say so explicitly, and requireCustomer
-// refuses it — which is what makes this a check rather than a formality.
-const sessionScope = (req) => (req.session && req.session.scope) === 'customer' || !(req.session && req.session.scope)
-    ? 'customer'
-    : String(req.session.scope);
+// A scope is an authorization claim, so absence is absence — never the most
+// privileged value this process understands. Existing sessions are deliberately
+// invalidated once by this change; accepting an unscoped cookie would preserve
+// the authorization hole indefinitely.
+const sessionScope = (req) => req.session && req.session.scope
+    ? String(req.session.scope)
+    : null;
 
 // A storefront session, and nothing else reaches past it. Both halves are
 // required: a session whose scope is not 'customer' did not come through this
@@ -132,7 +131,7 @@ async function requireCustomer(req, res, next) {
         if (isBlocked(profile)) return res.status(403).json({ error: BLOCKED_MESSAGE });
 
         const role = await roleNameById(profile.role_id);
-        if (role && role !== 'customer') {
+        if (role !== 'customer') {
             return res.status(403).json({ error: "This is not a storefront account." });
         }
 

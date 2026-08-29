@@ -9,20 +9,19 @@
  * PAYMENTS_ENABLED unset there is no gateway flow at all, and a route that
  * exists but refuses is a route somebody can learn the shape of.
  *
- * THE WEBHOOK RECORDS BEFORE IT INTERPRETS. Its first act is an append to
- * payment_events - raw payload, plus whether the signature verified - INCLUDING
- * deliveries that fail verification. A handler that verifies, acts and returns
- * 200 has destroyed its own evidence, and the signature_verified = false rows
- * are the only visibility into somebody probing the endpoint.
+ * THE WEBHOOK VERIFIES BEFORE IT PERSISTS. Invalid traffic gets one bounded
+ * HMAC and cannot consume the event table or reserve a real event id. A valid
+ * delivery is recorded before interpretation and remains retryable until its
+ * processing succeeds or reaches a terminal verified rejection.
  */
 const express = require('express');
-const crypto = require('crypto');
 const { supabase } = require('../../../core/database/supabase');
 const razorpay = require('../../../core/gateways/razorpay');
 const { PAYMENTS_ENABLED } = require('../../../core/config/payments');
 const { optionalId, trimmed } = require('../../../shared/validation');
 const { PAYMENT_STATUS } = require('../../../shared/contracts/payment');
 const { orderReference } = require('../../../shared/contracts/order-reference');
+const { operationalEvent } = require('../../../core/observability/operations');
 const { gatewayPaymentRow, markOrderPaid } = require('../services/settle-payment.service');
 const { verifyLimiter } = require('../infrastructure/payment-rate-limit');
 
@@ -106,7 +105,20 @@ function paymentsController() {
 
         const signature = req.get('x-razorpay-signature') || '';
         const eventId = req.get('x-razorpay-event-id') || '';
+
+        if (!eventId || eventId.length > 200 || signature.length > 512) {
+            return res.status(400).json({ error: "Invalid webhook headers." });
+        }
+
         const verified = razorpay.verifyWebhookSignature(req.rawBody, signature);
+
+        // Invalid traffic is rejected before it can consume permanent database
+        // rows or reserve a real event id. The raw body already has a 64 KiB
+        // ceiling in the parser, so the remaining cost is one bounded HMAC.
+        if (!verified) {
+            console.error(`Razorpay webhook signature rejected (event ${eventId}).`);
+            return res.status(400).json({ error: "Invalid signature." });
+        }
 
         const body = req.body || {};
         const eventType = trimmed(body.event) || 'unknown';
@@ -115,54 +127,66 @@ function paymentsController() {
         const refundEntity = (entities.refund && entities.refund.entity) || null;
         const orderEntity = (entities.order && entities.order.entity) || null;
 
-        // ---- 1. Record it before interpreting it.
+        // ---- 1. Record a verified delivery before interpreting it.
         //
         // A handler that verifies, acts and returns 200 has destroyed its own
         // evidence. When a customer says they paid and the order says otherwise,
         // the question is what Razorpay actually sent — and that answer has to
-        // survive the processing failing. So the append happens first, including
-        // for deliveries that fail verification: those rows are the only
-        // visibility into someone probing this endpoint.
+        // survive the processing failing. Signature verification happened just
+        // above, before this append, so forged traffic never reaches storage.
         let eventRow = null;
         try {
             const inserted = await supabase.from('payment_events').insert([{
                 // Razorpay's own id where it sent one. The fallback satisfies NOT
                 // NULL for a malformed delivery without inventing something that
                 // could collide with a real id.
-                event_id: eventId || `unsigned:${crypto.randomUUID()}`,
+                event_id: eventId,
                 event_type: eventType,
                 gateway: 'razorpay',
                 gateway_order_id: (paymentEntity && paymentEntity.order_id) || (orderEntity && orderEntity.id) || null,
                 gateway_payment_id: (paymentEntity && paymentEntity.id) || (refundEntity && refundEntity.payment_id) || null,
                 order_id: null,
                 payload: body,
-                signature_verified: verified
+                signature_verified: true
             }]).select().single();
 
             if (inserted.error) throw inserted.error;
             eventRow = inserted.data;
         } catch (error) {
             // 23505 on event_id is the unique index (migration 014 §8) saying this
-            // exact delivery has been seen. That is a redelivery, and the correct
-            // answer is 200 — anything else asks Razorpay to send it again.
+            // exact delivery has been seen. A completed delivery is a no-op; an
+            // incomplete one is deliberately processed again below.
             if (error && error.code === '23505') {
-                return res.status(200).json({ received: true, duplicate: true });
+                const existing = await supabase.from('payment_events')
+                    .select('*').eq('event_id', eventId).maybeSingle();
+                if (existing.error) {
+                    console.error("Webhook Duplicate Lookup Error:", existing.error);
+                    return res.status(500).json({ error: "Could not inspect the event." });
+                }
+                if (!existing.data) return res.status(500).json({ error: "Could not inspect the event." });
+                if (existing.data.processed_at) {
+                    return res.status(200).json({ received: true, duplicate: true });
+                }
+                eventRow = existing.data;
+            } else {
+                console.error("Webhook Store Error:", error);
+                // 500 so Razorpay retries: the event is not safely recorded.
+                return res.status(500).json({ error: "Could not record the event." });
             }
-            console.error("Webhook Store Error:", error);
-            // 500 so Razorpay retries: the event is not safely recorded.
-            return res.status(500).json({ error: "Could not record the event." });
-        }
-
-        // ---- 2. Only now, is it genuine?
-        if (!verified) {
-            console.error(`Razorpay webhook signature rejected (event ${eventId || 'no id'}, type ${eventType}).`);
-            return res.status(400).json({ error: "Invalid signature." });
         }
 
         const finish = async (note) => {
-            await supabase.from('payment_events')
+            const { error } = await supabase.from('payment_events')
                 .update({ processed_at: new Date().toISOString(), process_error: note || null })
                 .eq('id', eventRow.id);
+            if (error) throw error;
+        };
+
+        const leaveRetryable = async (note) => {
+            const { error } = await supabase.from('payment_events')
+                .update({ process_error: String(note || 'processing failed').slice(0, 500) })
+                .eq('id', eventRow.id);
+            if (error) throw error;
         };
 
         // ---- 3. Act on it.
@@ -216,7 +240,26 @@ function paymentsController() {
                         gatewayOrderId: gatewayOrderId,
                         source: `webhook:${eventType}`
                     });
-                    await finish(result.ok ? null : result.reason);
+                    if (!result.ok) {
+                        const retryable = ['gateway_unreachable', 'gateway_error', 'no_payment_row'].includes(result.reason);
+                        if (retryable) {
+                            await leaveRetryable(result.reason);
+                            await operationalEvent('payment_webhook_retryable_failure', {
+                                event_id: eventId, event_type: eventType, order_id: orderId,
+                                payment_id: paymentEntity.id, reason: result.reason
+                            });
+                            return res.status(503).json({ error: "Payment settlement is temporarily unavailable." });
+                        }
+                        await finish(`rejected:${result.reason}`);
+                        return res.status(200).json({ received: true, rejected: true });
+                    }
+                    await finish(result.requiresReview ? 'payment captured after cancellation; operator review required' : null);
+                    if (result.requiresReview) {
+                        await operationalEvent('payment_capture_requires_review', {
+                            event_id: eventId, event_type: eventType, order_id: orderId,
+                            payment_id: paymentEntity.id, reason: 'captured_after_cancellation'
+                        });
+                    }
                 }
             } else if (eventType === 'payment.failed') {
                 if (orderId !== null && paymentEntity) {
@@ -254,7 +297,11 @@ function paymentsController() {
             res.status(200).json({ received: true });
         } catch (error) {
             console.error("Webhook Processing Error:", error);
-            try { await finish(String(error && error.message).slice(0, 500)); } catch (ignored) {}
+            try { await leaveRetryable(error && error.message); } catch (ignored) {}
+            await operationalEvent('payment_webhook_processing_error', {
+                event_id: eventId, event_type: eventType,
+                reason: error && error.message
+            });
             // The event is stored, so this can be replayed from payment_events —
             // but a 500 asks for Razorpay's retry too, which is the cheaper
             // recovery of the two.

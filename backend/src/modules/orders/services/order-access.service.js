@@ -21,7 +21,7 @@ async function accessibleOrder(req, orderId) {
         }
         if (profile) {
             const role = await roleNameById(profile.role_id);
-            if (role && role !== 'customer') {
+            if (role !== 'customer') {
                 return { status: 403, error: 'This is not a storefront account.' };
             }
 

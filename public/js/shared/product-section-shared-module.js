@@ -316,7 +316,8 @@
             // not navigate — it used to send every click to a 404. The id and
             // slug ride along on the element, ready for a real route later.
             '<article data-product-id="' + escapeHtml(product.id) + '" data-product-slug="' + escapeHtml(product.url_slug) + '"',
-            '         class="group flex flex-col bg-white border border-[#12170f]/10 rounded-sm overflow-hidden hover:shadow-xl hover:scale-[101%] transition-all duration-300 h-full">',
+            '         tabindex="0" role="button" aria-label="View details for ' + name + '"',
+            '         class="group flex flex-col bg-white border border-[#12170f]/10 rounded-sm overflow-hidden hover:shadow-xl hover:scale-[101%] transition-all duration-300 h-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d4af37] focus-visible:ring-offset-2">',
             '    <div class="relative w-full h-[200px] shrink-0 bg-[#f1f5f9] flex items-center justify-center p-6 overflow-hidden">',
             '        ' + badge,
             '        ' + media,

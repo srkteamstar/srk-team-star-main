@@ -21,7 +21,6 @@
 const { supabase } = require('../../../core/database/supabase');
 const razorpay = require('../../../core/gateways/razorpay');
 const { CURRENCY, PAYMENT_STATUS } = require('../../../shared/contracts/payment');
-const { ORDER_STATUS_AWAITING_PAYMENT, ORDER_STATUS_PLACED } = require('../../../shared/contracts/order-status');
 
 // The payment row for an order — looked up BY ORDER ID ALONE, deliberately.
 //
@@ -140,47 +139,41 @@ async function markOrderPaid({ orderId, gatewayPaymentId, gatewayOrderId, source
         return { ok: false, reason: 'mismatch', message: 'That payment could not be verified against this order.' };
     }
 
-    // ---- It is real. Record it.
+    // ---- It is real. Record the money and move the order in one database
+    // transaction. This is also the lock boundary with customer cancellation:
+    // whichever transaction wins is visible to the other before it decides.
     //
     // payment_method now carries what the gateway OBSERVED (card / upi /
     // netbanking / …) rather than what the customer said they intended, which
     // is the widening migration 014 documents on that column.
-    const update = await supabase.from('payments')
-        .update({
-            transaction_id: gatewayPaymentId,
-            status: PAYMENT_STATUS.paid,
-            payment_method: gatewayPayment.method || null,
-            verified_at: new Date().toISOString()
-        })
-        .eq('id', paymentRow.id)
-        .select()
-        .single();
+    const settled = await supabase.rpc('settle_captured_store_payment', {
+        p_order_id: orderId,
+        p_payment_id: paymentRow.id,
+        p_transaction_id: gatewayPaymentId,
+        p_payment_method: gatewayPayment.method || null,
+        p_verified_at: new Date().toISOString()
+    });
 
-    if (update.error) {
+    if (settled.error) {
         // 23505 is the unique index on transaction_id (migration 014 §4a)
         // saying this payment is already recorded. A duplicate means it
         // already happened.
-        if (update.error.code === '23505') return { ok: true, already: true, paymentRow };
-        throw update.error;
+        if (settled.error.code === '23505') return { ok: true, already: true, paymentRow };
+        throw settled.error;
     }
 
-    // Fulfilment can begin now, and not before. Guarded on the awaiting-payment
-    // status so this cannot resurrect an order an administrator cancelled.
-    const orderUpdate = await supabase.from('orders')
-        .update({ status: ORDER_STATUS_PLACED })
-        .eq('id', orderId)
-        .eq('status', ORDER_STATUS_AWAITING_PAYMENT)
-        .select()
-        .single();
-
-    // No matching row is fine and expected under a race — the other path moved
-    // it first. The payment row above is the record that matters.
-    if (orderUpdate.error && orderUpdate.error.code !== 'PGRST116') {
-        console.error('Order status update failed after a verified payment on order', orderId, orderUpdate.error);
+    const result = Array.isArray(settled.data) ? settled.data[0] : settled.data;
+    if (result && result.requires_review) {
+        console.error(`PAYMENT REVIEW REQUIRED: order ${orderId} captured after cancellation (${gatewayPaymentId}).`);
     }
 
     console.log(`Payment verified (${source}): order ${orderId}, payment ${gatewayPaymentId}, ${paymentRow.amount_paise} paise.`);
-    return { ok: true, already: false, paymentRow: update.data };
+    return {
+        ok: true,
+        already: Boolean(result && result.already),
+        requiresReview: Boolean(result && result.requires_review),
+        paymentRow: result && result.payment ? result.payment : paymentRow
+    };
 }
 
 module.exports = { gatewayPaymentRow, markOrderPaid };

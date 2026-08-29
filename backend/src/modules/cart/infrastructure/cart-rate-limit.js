@@ -2,7 +2,7 @@
  * modules/cart/infrastructure/cart-rate-limit.js
  * ============================================================================
  */
-const rateLimit = require('express-rate-limit');
+const { storefrontRateLimit } = require('../../../core/http/rate-limit');
 
 // ==========================================
 
@@ -15,13 +15,13 @@ const rateLimit = require('express-rate-limit');
 // of the shape rather than luck: every PUT carries the *complete* cart, so a
 // 429 is not a lost line — it is one skipped snapshot, and the next write
 // that lands says everything the refused one would have.
-const cartReadLimiter = rateLimit({
+const cartReadLimiter = storefrontRateLimit('cart-read', {
     windowMs: 15 * 60 * 1000,
     max: 120,
     message: { error: "Too many requests. Try again in a few minutes." }
 });
 
-const cartWriteLimiter = rateLimit({
+const cartWriteLimiter = storefrontRateLimit('cart-write', {
     windowMs: 15 * 60 * 1000,
     max: 300,
     message: { error: "Too many cart updates. Try again in a few minutes." }

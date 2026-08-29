@@ -276,3 +276,158 @@ test('Checkout keeps a guest draft and payment choice through reload', async ({ 
     await expect(page.locator('#checkout-address')).toHaveValue('42 Draft Street');
     await expect(page.locator('[data-payment-method="Cash on Delivery"]')).toHaveAttribute('aria-pressed', 'true');
 });
+
+const ONLINE_SUMMARY = {
+    lines: [{ product_id: 1, product_name: 'Fake Machine', unit_price: 1000, quantity: 2, line_total: 2000 }],
+    blocked: [],
+    totals: {
+        subtotal: 2000, shipping: 0, tax: 360, total: 2360, gst_rate: 0.18,
+        shipping_due_on_delivery: false, shipping_is_free: true, shipping_free_above: 50000
+    },
+    payments_enabled: true,
+    payment_methods: ['Cash on Delivery']
+};
+
+async function fillOnlineCheckout(page) {
+    await page.goto('/store/store.html', { waitUntil: 'domcontentloaded' });
+    await page.evaluate(() => sessionStorage.setItem('srk_cart', JSON.stringify({
+        v: 1,
+        items: [{ id: '1', name: 'Fake Machine', category_name: 'Machinery', price: '1000', image_url: '', quantity: 2 }]
+    })));
+    await page.goto('/store/checkout.html', { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#checkout-form')).toBeVisible();
+
+    for (const [selector, value] of [
+        ['#checkout-name', 'Payment Buyer'], ['#checkout-phone', '9000000044'],
+        ['#checkout-email', 'payment@example.test'], ['#checkout-address', '44 Payment Street'],
+        ['#checkout-city', 'Gohana'], ['#checkout-state', 'Haryana'], ['#checkout-postal', '131301']
+    ]) {
+        await page.locator(selector).evaluate((field, next) => {
+            field.removeAttribute('readonly');
+            field.value = next;
+            field.dispatchEvent(new Event('input', { bubbles: true }));
+        }, value);
+    }
+}
+
+test('Online payment runs in a new tab and a failed attempt restores the unchanged checkout', async ({ page }) => {
+    let checkoutCalls = 0;
+    let cancellationCalls = 0;
+    let cancellationBody = null;
+    await page.route('**/api/checkout/summary', route => route.fulfill({ json: ONLINE_SUMMARY }));
+    await page.route('**/api/checkout', route => {
+        checkoutCalls += 1;
+        return route.fulfill({
+            status: 201,
+            json: {
+                reference: 'ORD-2026-1077', order_id: 77, order_access_token: 'guest-token', customer: null,
+                totals: ONLINE_SUMMARY.totals,
+                payment: { key_id: 'rzp_test_browser', gateway_order_id: 'order_browser_77', amount_paise: 236000, currency: 'INR' }
+            }
+        });
+    });
+    await page.route('**/api/orders/77/cancel', route => {
+        cancellationCalls += 1;
+        cancellationBody = route.request().postDataJSON();
+        return route.fulfill({ status: 200, json: { cancelled: true, discarded: true } });
+    });
+    await page.context().route('https://checkout.razorpay.com/v1/checkout.js', route => route.fulfill({
+        contentType: 'application/javascript',
+        body: `window.Razorpay = function (options) {
+            this.handlers = {};
+            this.on = (name, callback) => { this.handlers[name] = callback; };
+            this.open = () => setTimeout(() => this.handlers['payment.failed']({ error: { description: 'Card was declined.' } }), 20);
+        };`
+    }));
+
+    await fillOnlineCheckout(page);
+    const popupPromise = page.waitForEvent('popup');
+    await page.locator('#checkout-submit').click();
+    const paymentTab = await popupPromise;
+
+    await expect.poll(() => paymentTab.isClosed()).toBe(true);
+    await expect(page.locator('#checkout-form')).toBeVisible();
+    await expect(page.locator('#checkout-name')).toHaveValue('Payment Buyer');
+    await expect(page.locator('#checkout-address')).toHaveValue('44 Payment Street');
+    await expect(page.getByRole('alertdialog')).toContainText('Payment unsuccessful');
+    await expect(page.getByRole('alertdialog')).toContainText('checkout details are unchanged');
+    expect(checkoutCalls).toBe(1);
+    expect(cancellationCalls).toBe(1);
+    expect(cancellationBody).toEqual({ reason: 'payment_failed' });
+});
+
+test('A successful payment closes only its tab and confirms the order on checkout', async ({ page }) => {
+    await page.route('**/api/checkout/summary', route => route.fulfill({ json: ONLINE_SUMMARY }));
+    await page.route('**/api/checkout', route => route.fulfill({
+        status: 201,
+        json: {
+            reference: 'ORD-2026-1078', order_id: 78, order_access_token: 'guest-token', customer: null,
+            totals: ONLINE_SUMMARY.totals,
+            payment: { key_id: 'rzp_test_browser', gateway_order_id: 'order_browser_78', amount_paise: 236000, currency: 'INR' }
+        }
+    }));
+    await page.route('**/api/payments/verify', route => route.fulfill({
+        status: 200,
+        json: { paid: true, reference: 'ORD-2026-1078', order_id: 78 }
+    }));
+    await page.context().route('https://checkout.razorpay.com/v1/checkout.js', route => route.fulfill({
+        contentType: 'application/javascript',
+        body: `window.Razorpay = function (options) {
+            this.on = () => {};
+            this.open = () => setTimeout(() => options.handler({
+                razorpay_order_id: 'order_browser_78',
+                razorpay_payment_id: 'pay_browser_78',
+                razorpay_signature: 'browser-signature'
+            }), 20);
+        };`
+    }));
+
+    await fillOnlineCheckout(page);
+    const popupPromise = page.waitForEvent('popup');
+    await page.locator('#checkout-submit').click();
+    const paymentTab = await popupPromise;
+
+    await expect.poll(() => paymentTab.isClosed()).toBe(true);
+    await expect(page.locator('#checkout-root')).toContainText('ORD-2026-1078');
+    await expect(page.getByRole('alertdialog')).toContainText('Payment successful');
+    await expect.poll(() => page.evaluate(() => window.storeCart.items().length)).toBe(0);
+    expect(await page.evaluate(() => sessionStorage.getItem('srk_checkout_draft'))).toBeNull();
+});
+
+test('Store product details are reachable with Enter and Space', async ({ page }) => {
+    await page.goto('/store/store.html', { waitUntil: 'domcontentloaded' });
+    const card = page.locator('article[data-product-id][role="button"][tabindex="0"]').first();
+    await expect(card).toBeVisible();
+
+    await card.focus();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('#product-details')).toBeVisible();
+    await page.locator('#product-details-close').click();
+    await expect(page.locator('#product-details')).toHaveCount(0);
+
+    await card.focus();
+    await page.keyboard.press('Space');
+    await expect(page.locator('#product-details')).toBeVisible();
+});
+
+test('Malformed encoded hashes fall back safely', async ({ page }) => {
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+
+    await page.goto('/store/store.html#%E0%A4%A', { waitUntil: 'domcontentloaded' });
+    await expect(page.getByRole('heading', { name: 'Shop by Category' })).toBeVisible();
+
+    await page.goto('/catalogue.html#%E0%A4%A', { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('.category-btn').first()).toBeVisible();
+    expect(errors).toEqual([]);
+});
+
+test('Script CSP has no broad inline execution grant', async ({ page }) => {
+    const response = await page.goto('/', { waitUntil: 'domcontentloaded' });
+    const csp = response && response.headers()['content-security-policy'];
+    expect(csp).toBeTruthy();
+    const scriptDirective = csp.split(';').find(part => part.trim().startsWith('script-src')) || '';
+    expect(scriptDirective).not.toContain("'unsafe-inline'");
+    expect(scriptDirective).toContain("'sha256-");
+    expect(await page.evaluate(() => !!window.lenis)).toBe(true);
+});

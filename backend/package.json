@@ -20,6 +20,7 @@
     "dev": "node --watch server.js",
     "reconcile:scheduled": "node scripts/reconcile-scheduled.js",
     "reconcile:schedule-install": "powershell -ExecutionPolicy Bypass -File scripts/schedule-reconcile.ps1",
+    "set-customer-password": "node scripts/set-customer-password.js",
     "build:css": "tailwindcss -c tailwind.config.js -i styles/tailwind.input.css -o ../public/assets/vendor/tailwind.build.css --minify",
     "watch:css": "tailwindcss -c tailwind.config.js -i styles/tailwind.input.css -o ../public/assets/vendor/tailwind.build.css --watch",
     "test:all": "npm run verify && npm test && npm run test:browser",

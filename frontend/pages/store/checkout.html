@@ -170,14 +170,13 @@
     <!-- payment-module            opens Razorpay; must precede checkout-module,
                                    which calls window.storePayment on submit.
 
-         data-razorpay-checkout on <body> is NOT decoration. server.js scans
+         data-razorpay-checkout on <body> is NOT decoration. The server scans
          the project's HTML at boot for that exact attribute and grants this
-         document — and only this document — the CSP directives Razorpay's
-         checkout needs (script-src, frame-src, connect-src, img-src,
+         document and the dedicated payment-tab host the CSP directives
+         Razorpay needs (script-src, frame-src, connect-src, img-src,
          form-action). Same read-rather-than-write pattern as data-map-embed.
-         Remove the attribute and the grant disappears on the next restart;
-         remove the module and the attribute, and this page is back to
-         'self' for everything.
+         Remove either marker and that document's grant disappears on the next
+         restart.
 
          Razorpay's own checkout.js is deliberately NOT a <script> tag here.
          payment-module injects it on the click that needs it, so a visitor who

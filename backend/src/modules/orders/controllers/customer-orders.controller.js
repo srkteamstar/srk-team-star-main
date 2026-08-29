@@ -129,6 +129,15 @@ function customerOrdersController() {
             const rows = orders.map(order => {
                 const shipping = shippingByOrder.get(String(order.id)) || null;
                 const payment = paymentByOrder.get(String(order.id)) || null;
+
+                // A terminal Razorpay failure is retained as an audit record
+                // so a late capture can still be reconciled, but it is not a
+                // placed order. If money arrives later, settlement changes the
+                // order to Payment Review and the row becomes visible again.
+                if (order.status === 'Cancelled' && payment && payment.status === PAYMENT_STATUS.failed) {
+                    return null;
+                }
+
                 return {
                     id: order.id,
                     // One shared formatter, not a fourth copy of these two lines -
@@ -218,7 +227,7 @@ function customerOrdersController() {
                         quantity: item.quantity
                     }))
                 };
-            });
+            }).filter(Boolean);
 
             res.status(200).json(rows);
         } catch (error) {
@@ -283,17 +292,20 @@ function customerOrdersController() {
         if (orderId === null) return res.status(404).json({ error: "No such order." });
 
         try {
+            const failedCheckout = Boolean(req.body && req.body.reason === 'payment_failed');
             const access = await accessibleOrder(req, orderId);
             if (!access.order) return res.status(access.status).json({ error: access.error });
             const order = access.order;
 
             // Idempotent. A double-click, or a retry after a dropped response,
-            // should not read as a failure for work that is already done.
-            if (order.status === 'Cancelled') {
+            // should not read as a failure for work that is already done. A
+            // failed-checkout retry continues below so it can finish marking
+            // the payment if the process stopped after cancelling the order.
+            if (order.status === 'Cancelled' && !failedCheckout) {
                 return res.status(200).json({ cancelled: true, already: true, order_id: order.id });
             }
 
-            if (order.status !== ORDER_STATUS_AWAITING_PAYMENT) {
+            if (order.status !== ORDER_STATUS_AWAITING_PAYMENT && !(failedCheckout && order.status === 'Cancelled')) {
                 return res.status(409).json({
                     error: "This order is already being processed, so it cannot be cancelled here. Get in touch and we will sort it out."
                 });
@@ -304,6 +316,19 @@ function customerOrdersController() {
             if (payment && payment.status === PAYMENT_STATUS.paid) {
                 return res.status(409).json({
                     error: "This order has been paid for, so it cannot be cancelled here. Get in touch and we will sort it out."
+                });
+            }
+
+            // Only a Razorpay attempt can be classified as a failed checkout.
+            // A browser cannot use this flag to hide an offline order or one
+            // whose payment state has moved beyond Created/Failed.
+            if (failedCheckout && (
+                !payment ||
+                payment.gateway !== 'razorpay' ||
+                ![PAYMENT_STATUS.created, PAYMENT_STATUS.failed].includes(payment.status)
+            )) {
+                return res.status(409).json({
+                    error: "This payment attempt cannot be classified as failed. Refresh to see where it stands."
                 });
             }
 
@@ -349,29 +374,60 @@ function customerOrdersController() {
             // in JavaScript. Everything above took time — a webhook may have
             // landed during the round trip to Razorpay — and this is the only
             // check that is atomic with the write.
-            const { data: updated, error: updateError } = await supabase
-                .from('orders')
-                .update({ status: 'Cancelled' })
-                .eq('id', order.id)
-                .eq('status', ORDER_STATUS_AWAITING_PAYMENT)
-                .select()
-                .maybeSingle();
+            if (order.status !== 'Cancelled') {
+                const { data: updated, error: updateError } = await supabase
+                    .from('orders')
+                    .update({ status: 'Cancelled' })
+                    .eq('id', order.id)
+                    .eq('status', ORDER_STATUS_AWAITING_PAYMENT)
+                    .select()
+                    .maybeSingle();
 
-            if (updateError) throw updateError;
+                if (updateError) throw updateError;
 
-            if (!updated) {
-                // Somebody else moved it while we were asking. Almost certainly
-                // markOrderPaid(), which is the good outcome — say so rather than
-                // reporting a failure for an order that just got paid for.
-                return res.status(409).json({
-                    error: "This order changed while we were cancelling it. Refresh to see where it stands."
-                });
+                if (!updated) {
+                    // Somebody else moved it while we were asking. Almost certainly
+                    // markOrderPaid(), which is the good outcome — say so rather than
+                    // reporting a failure for an order that just got paid for.
+                    return res.status(409).json({
+                        error: "This order changed while we were cancelling it. Refresh to see where it stands."
+                    });
+                }
             }
 
-            // The payments row is deliberately left as 'Created'. That is what
-            // happened: a gateway order was created and nobody paid it. Writing
-            // 'Failed' would claim an attempt that was never made, and the
-            // reconciliation script reads these statuses at face value.
+            if (failedCheckout && payment.status === PAYMENT_STATUS.created) {
+                // The order was cancelled first. If a captured-payment webhook
+                // won the race, this guarded update touches nothing and we
+                // refuse to call the attempt failed. Settlement will expose it
+                // as Payment Review instead.
+                const { data: failedPayment, error: paymentUpdateError } = await supabase
+                    .from('payments')
+                    .update({ status: PAYMENT_STATUS.failed })
+                    .eq('id', payment.id)
+                    .eq('status', PAYMENT_STATUS.created)
+                    .select()
+                    .maybeSingle();
+
+                if (paymentUpdateError) throw paymentUpdateError;
+                if (!failedPayment) {
+                    const latestPayment = await gatewayPaymentRow(order.id);
+                    if (latestPayment && latestPayment.status === PAYMENT_STATUS.failed) {
+                        console.log(`Failed checkout attempt ${order.id} was already marked failed by the gateway webhook.`);
+                        return res.status(200).json({ cancelled: true, discarded: true, order_id: order.id });
+                    }
+                    return res.status(409).json({
+                        error: "This payment changed while we were closing it. Refresh to see where it stands."
+                    });
+                }
+            }
+
+            if (failedCheckout) {
+                console.log(`Failed checkout attempt ${order.id} closed with no payment received.`);
+                return res.status(200).json({ cancelled: true, discarded: true, order_id: order.id });
+            }
+
+            // A voluntary cancellation leaves the payment at Created. That is
+            // what happened: a gateway order existed but no attempt failed.
             console.log(`Order ${order.id} cancelled by the customer before payment.`);
             res.status(200).json({ cancelled: true, order_id: order.id });
         } catch (error) {

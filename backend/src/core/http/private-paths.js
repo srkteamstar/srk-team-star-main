@@ -83,7 +83,7 @@ function privatePathGuard(req, res, next) {
     // route behind it is enforced server-side — but noindex on the response is
     // the half a crawler cannot ignore by asking for the page anyway, which
     // robots.txt is not.
-    if (/^\/(store\/checkout\.html)$/i.test(pathname)) {
+    if (/^\/(store\/(?:checkout|payment)\.html)$/i.test(pathname)) {
         res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive');
     }
 

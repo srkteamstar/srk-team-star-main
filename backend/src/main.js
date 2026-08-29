@@ -34,6 +34,7 @@ const express = require('express');
 
 // ---- core: the application's own settings and infrastructure ---------------
 const { applyAppSettings } = require('./core/config/app-settings');
+const { assertProductionConfig } = require('./core/config/runtime');
 const { assertGatewayBootConfig } = require('./core/config/payments');
 const { corsMiddleware } = require('./core/http/cors');
 const { csrfOriginGuard } = require('./core/http/csrf');
@@ -117,6 +118,7 @@ function createApp() {
  * @returns {import('http').Server}
  */
 function start() {
+    assertProductionConfig();
     assertGatewayBootConfig();
 
     const app = createApp();

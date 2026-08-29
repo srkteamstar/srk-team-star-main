@@ -27,7 +27,10 @@ function applyAppSettings(app) {
     // you control (usually 1). Erring in the safe direction costs nothing but a
     // shared bucket for everyone behind the same NAT. Erring the other way
     // removes rate limiting altogether.
-    const TRUST_PROXY = process.env.TRUST_PROXY;
+    // Vercel terminates TLS and supplies the client address through its trusted
+    // proxy layer. Its platform marker is safer than asking every deployment
+    // to remember a second flag; other hosts remain opt-in.
+    const TRUST_PROXY = process.env.TRUST_PROXY || (process.env.VERCEL ? '1' : '');
     if (TRUST_PROXY) {
         app.set('trust proxy', /^\d+$/.test(TRUST_PROXY) ? Number(TRUST_PROXY) : TRUST_PROXY);
     } else {

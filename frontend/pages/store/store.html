@@ -932,7 +932,12 @@
             const NOT_A_SECTION = ['home', 'assistance', 'quote', 'combos'];
 
             const route = () => {
-                const requested = decodeURIComponent(window.location.hash.slice(1));
+                let requested;
+                try {
+                    requested = decodeURIComponent(window.location.hash.slice(1));
+                } catch (error) {
+                    requested = '';
+                }
                 if (!requested || NOT_A_SECTION.indexOf(requested) !== -1) return;
 
                 const target = document.querySelector(

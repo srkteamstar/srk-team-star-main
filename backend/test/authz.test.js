@@ -92,6 +92,12 @@ async function req(cookies, method, path, body, extraHeaders) {
     r = await req(legacy, 'GET', '/api/orders/mine');
     check('...and that locked profile received no session', r.status === 401, JSON.stringify(r).slice(0, 80));
 
+    const unassigned = jar();
+    r = await req(unassigned, 'POST', '/api/auth/login', { identifier: 'unassigned@example.test', password: PASSWORD });
+    check('an account with a missing role fails closed at sign-in', r.status === 403, JSON.stringify(r));
+    r = await req(unassigned, 'GET', '/api/orders/mine');
+    check('...and receives no storefront session', r.status === 401, JSON.stringify(r));
+
     console.log('\n=== 2. IDOR — one customer cannot read another\'s orders ===');
     const aOrders = await req(custA, 'GET', '/api/orders/mine');
     const bOrders = await req(custB, 'GET', '/api/orders/mine');
@@ -160,6 +166,15 @@ async function req(cookies, method, path, body, extraHeaders) {
     check('register cannot self-assign another role',
         r.status === 201 && r.body.customer.role === 'customer', JSON.stringify(r.body).slice(0, 140));
 
+    r = await req(jar(), 'POST', '/api/auth/register', {
+        name: 'x'.repeat(5000), email: 'bounded@example.test', phone: '9000000097',
+        company: 'y'.repeat(5000), password: PASSWORD
+    });
+    check('registration rejects oversized profile fields before writing', r.status === 400, JSON.stringify(r));
+
+    r = await req(custA, 'PATCH', '/api/auth/me', { address_line: 'x'.repeat(5000) });
+    check('profile editing rejects an oversized address before writing', r.status === 400, JSON.stringify(r));
+
     console.log('\n=== 4. GUEST CHECKOUT CAPTURES CONTACT WITHOUT CREATING AN ACCOUNT ===');
     const guest = jar();
     r = await req(guest, 'POST', '/api/checkout', {
@@ -186,6 +201,15 @@ async function req(cookies, method, path, body, extraHeaders) {
     check('the checkout token opens only that guest invoice',
         r.status === 200 && r.body.buyer.name === 'Guest Buyer' && r.body.buyer.email === 'other-role@example.test' &&
         !JSON.stringify(r.body).includes('guest_access_token_hash'), JSON.stringify(r.body).slice(0, 240));
+
+    r = await req(jar(), 'POST', '/api/checkout', {
+        items: [{ product_id: 1, quantity: 1 }],
+        contact: { name: 'Guest Buyer', email: 'bounded-checkout@example.test', phone: '9111111111' },
+        address: { address_line: 'x'.repeat(5000), city: 'Gohana', state: 'Haryana', postal_code: '131301' },
+        payment_mode: 'offline'
+    });
+    check('guest checkout rejects an oversized delivery address before pricing or writing',
+        r.status === 400, JSON.stringify(r));
 
     console.log('\n=== 5. EXISTING CONTACT DETAILS STILL REMAIN A GUEST ORDER ===');
     const guest2 = jar();

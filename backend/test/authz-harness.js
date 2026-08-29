@@ -52,7 +52,9 @@ const db = {
         // row of each to work with. It also represents a profile created during
         // identifier-only access: no hash means locked, never passwordless.
         { id: 202, full_name: 'Fake Customer C', email: 'c@example.test', phone_number: '9000000005',
-          phone_normalized: '9000000005', company: null, role_id: 2, created_at: '2026-01-04T00:00:00Z' }
+          phone_normalized: '9000000005', company: null, role_id: 2, created_at: '2026-01-04T00:00:00Z' },
+        { id: 203, full_name: 'Fake Unassigned Role', email: 'unassigned@example.test', phone_number: '9000000006',
+          phone_normalized: '9000000006', company: null, role_id: null, password_hash: fixturePasswordHash(FIXTURE_PASSWORD), created_at: '2026-01-05T00:00:00Z' }
     ],
     shipping_addresses: [
         { id: 1, user_id: 200, full_address: '1 A Street', city: 'Gohana', state: 'Haryana', country: 'India', zip_code: '131301' },
@@ -394,6 +396,35 @@ function makeQuery(table) {
 const fakeSupabase = {
     from: (table) => makeQuery(table),
     rpc: async (name, args) => {
+        if (name === 'settle_captured_store_payment') {
+            const payment = db.payments.find(row => String(row.id) === String(args.p_payment_id)
+                && String(row.order_id) === String(args.p_order_id));
+            const order = db.orders.find(row => String(row.id) === String(args.p_order_id));
+            if (!payment || !order) return { data: null, error: { code: 'P0001', message: 'payment or order not found' } };
+
+            const already = payment.status === 'Paid';
+            if (already && String(payment.transaction_id) !== String(args.p_transaction_id)) {
+                return { data: null, error: { code: 'P0001', message: 'different transaction already settled' } };
+            }
+
+            payment.transaction_id = args.p_transaction_id;
+            payment.status = 'Paid';
+            payment.payment_method = args.p_payment_method;
+            payment.verified_at = args.p_verified_at;
+            if (order.status === 'Pending Payment') order.status = 'Processing';
+            else if (order.status === 'Cancelled') order.status = 'Payment Review';
+
+            return {
+                data: {
+                    already,
+                    payment: Object.assign({}, payment),
+                    order_status: order.status,
+                    requires_review: order.status === 'Payment Review'
+                },
+                error: null
+            };
+        }
+
         if (name === 'create_quote_request') {
             if (control.consumeQuoteRpcMissing()) {
                 return {
@@ -543,6 +574,9 @@ globalThis.fetch = async function (url, options) {
     // Read a payment back.
     const paymentMatch = href.match(/\/v1\/payments\/([^/?]+)$/);
     if (paymentMatch) {
+        if (control.consumeGatewayPaymentFetchFailure()) {
+            throw new Error('forced transient gateway failure');
+        }
         const id = decodeURIComponent(paymentMatch[1]);
         const parts = id.split('_');
         // pay _ status _ amount _ order _ HARNESSn   -> the order id itself

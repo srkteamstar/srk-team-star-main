@@ -88,25 +88,22 @@ Express project's static files before running an optional build command.
 | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | the service-role key, which bypasses RLS. It never reaches a browser. |
 | `TRUST_PROXY` | unset unless something really is proxying this process. Wrong in one direction costs a shared rate-limit bucket; wrong in the other removes rate limiting entirely. |
 | `ALLOWED_ORIGINS` | empty unless the frontend is served from elsewhere. |
+| `OPERATIONAL_ALERT_WEBHOOK_URL` | optional HTTPS receiver for redacted payment/reconciliation alerts; events are always written as structured platform logs. |
 | `PAYMENTS_ENABLED` | unset = offline flow. Set = the three Razorpay secrets **must** be present and match `NODE_ENV`, or the process refuses to start. |
 | `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` | |
-| `GST_RATE`, `SHIPPING_FLAT`, `SHIPPING_FREE_ABOVE` | placeholders — confirm against the real commercial terms. |
+| `GST_RATE`, `SHIPPING_FREE_ABOVE` | Confirmed defaults: 18% GST and free delivery from ₹50,000. Lower-value delivery is collected at delivery and excluded from the website total. |
 
 ---
 
 ## Database
 
-Supabase. `backend/migrations/` holds 31 numbered SQL files, run in order.
+Supabase. `backend/migrations/` holds numbered SQL files, run in order.
 
-Not all of them have been run, and the ones outstanding are outstanding for
-reasons rather than by neglect — **020** (a type change on live money columns)
-and **023** (destructive, and superseded by 024) are both deliberate. **025**
-must be run before checkout works at all; **027** must be run or every enquiry
-without a phone number is lost; **028** must be run before the password-auth
-code is deployed. **029–031** install the quotation snapshot, frozen purchase
-invoice fields and true guest checkout; apply them in that order before
-deploying those UI changes. The migration headers say which is which; read the
-one you are about to run.
+The configured production schema was checked on 29 August 2026: **020, 025,
+027, 028 and 029–031 are present**. New deployments must also apply **032**
+(shared sessions and rate-limit state) and **033** (atomic payment settlement)
+before deploying the matching application code. Migration 023 remains
+superseded by 024 and must not be run.
 
 ---
 

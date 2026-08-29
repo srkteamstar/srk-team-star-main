@@ -8,12 +8,12 @@
  * were paid for and never marked. The signature is the protection, and it
  * costs one HMAC.
  */
-const rateLimit = require('express-rate-limit');
+const { storefrontRateLimit } = require('../../../core/http/rate-limit');
 
 
 // A read the checkout page makes once per attempt, plus retries. Not a write,
 // so it is budgeted like summaryLimiter rather than checkoutLimiter.
-const verifyLimiter = rateLimit({
+const verifyLimiter = storefrontRateLimit('payment-verify', {
     windowMs: 15 * 60 * 1000,
     max: 30,
     message: { error: "Too many verification attempts. Try again in a few minutes." }

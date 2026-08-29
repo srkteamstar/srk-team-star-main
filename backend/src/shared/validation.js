@@ -30,6 +30,10 @@ const MAX_LENGTHS = {
     email: 254,          // the RFC 5321 maximum for a whole address
     phone: 32,
     address: 400,
+    city: 100,
+    state: 100,
+    postal_code: 20,
+    country: 100,
     message: 5000,
     notes: 5000,
     product_name: 200,

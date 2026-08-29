@@ -12,9 +12,9 @@
  * up the quote form's budget too, and a visitor who did both hit a wall that
  * named neither.
  */
-const rateLimit = require('express-rate-limit');
+const { storefrontRateLimit } = require('../../../core/http/rate-limit');
 
-const formLimiter = rateLimit({
+const formLimiter = storefrontRateLimit('enquiry-create', {
     windowMs: 15 * 60 * 1000,
     max: 5,
     message: { error: "Too many requests from this IP, please try again later." }

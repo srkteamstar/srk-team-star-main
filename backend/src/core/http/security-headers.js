@@ -10,6 +10,7 @@
  */
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const paths = require('../config/paths');
 const { ROUTED_URLS } = require('../config/static-mounts');
 
@@ -33,15 +34,11 @@ const { ROUTED_URLS } = require('../config/static-mounts');
 //
 // CONTENT-SECURITY-POLICY
 // default-src 'none', then only what is proven necessary:
-//   script-src  'self' plus 'unsafe-inline'. The inline part is not a free
-//               choice: there is no build step, there are twelve inline
-//               onclick= attributes and eleven inline <script> blocks across
-//               the pages, and the modules hand-build more markup that
-//               carries handlers. Removing it means extracting those, which
-//               is real work and a separate change. What it still buys is
-//               that no EXTERNAL host is a script source any more — Tailwind
-//               and Lenis are vendored same-origin, so nothing here needs to
-//               name cdn.tailwindcss.com or unpkg.com.
+//   script-src  'self' plus exact SHA-256 hashes for each inline script and the
+//               small legacy image-fallback handlers. There is no broad
+//               'unsafe-inline' grant: editing an inline block changes its hash
+//               and the browser refuses it until the policy is regenerated at
+//               the next server boot. Tailwind and Lenis are vendored same-origin.
 //   connect-src 'self'. This one is the prize. Whatever runs on the page,
 //               injected or not, cannot fetch, XHR, sendBeacon or open a
 //               socket to anywhere but this origin. That is the exfiltration
@@ -70,7 +67,7 @@ const SUPABASE_STORAGE_ORIGIN = (() => {
 
 const CSP_BASE = [
     "default-src 'none'",
-    "script-src 'self' 'unsafe-inline'",
+    "script-src 'self'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data:" + (SUPABASE_STORAGE_ORIGIN ? ' ' + SUPABASE_STORAGE_ORIGIN : ''),
     "font-src 'self'",
@@ -82,6 +79,61 @@ const CSP_BASE = [
     "manifest-src 'self'",
     "worker-src 'none'"
 ];
+
+// The HTML parser normalises CRLF/CR to LF before the browser hashes an inline
+// script. Hash the same bytes even when the checked-out file uses Windows line
+// endings, otherwise every hash looks right on disk and fails in Chromium.
+const scriptHash = (source) => `'sha256-${crypto.createHash('sha256')
+    .update(String(source).replace(/\r\n?/g, '\n'))
+    .digest('base64')}'`;
+
+// These are the complete legacy image-fallback handlers still emitted by the
+// browser modules. `unsafe-hashes` allows only these exact attribute bodies;
+// it does not enable arbitrary inline JavaScript.
+const EVENT_HANDLER_HASHES = [
+    "this.style.display='none'; this.nextElementSibling.style.display='flex';",
+    "this.style.visibility='hidden';",
+    "this.style.display='none'",
+    "this.outerHTML='<span class=\"text-xl font-bold text-[#d4af37]\">SRK</span>'"
+].map(scriptHash);
+
+function inlineScriptHashes() {
+    const byUrl = new Map();
+    const add = (url, hashes) => byUrl.set(url, [...new Set([...(byUrl.get(url) || []), ...hashes])]);
+    const hashesIn = (source) => {
+        const hashes = [];
+        const pattern = /<script\b(?![^>]*\bsrc\s*=)[^>]*>([\s\S]*?)<\/script>/gi;
+        let match;
+        while ((match = pattern.exec(source)) !== null) hashes.push(scriptHash(match[1]));
+        return hashes;
+    };
+
+    const walk = (dir) => {
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+            if (entry.name.startsWith('.')) continue;
+            const full = path.join(dir, entry.name);
+            if (entry.isDirectory()) { walk(full); continue; }
+            if (!entry.name.toLowerCase().endsWith('.html')) continue;
+
+            const relative = path.relative(paths.PAGES_ROOT, full).split(path.sep).join('/');
+            const fileUrl = `/${relative}`;
+            const hashes = hashesIn(fs.readFileSync(full, 'utf8'));
+            add(fileUrl, hashes);
+            if (entry.name.toLowerCase() === 'index.html') {
+                const directoryUrl = fileUrl.slice(0, -'index.html'.length) || '/';
+                add(directoryUrl, hashes);
+                if (directoryUrl === '/') add('/', hashes);
+            }
+        }
+    };
+
+    walk(paths.PAGES_ROOT);
+    const legalHashes = hashesIn(fs.readFileSync(paths.LEGAL_SHELL_HTML, 'utf8'));
+    ROUTED_URLS.filter(url => url.startsWith('/legal/')).forEach(url => add(url, legalHashes));
+    return byUrl;
+}
+
+const INLINE_SCRIPT_HASHES = inlineScriptHashes();
 
 // FRAME-SRC IS GRANTED PER DOCUMENT, AND THE LIST IS READ, NOT WRITTEN.
 //
@@ -171,7 +223,7 @@ const MAP_FRAME_PAGES = (() => {
 })();
 
 // RAZORPAY IS THE ONE THIRD-PARTY SCRIPT THIS SITE STILL LOADS, AND IT IS
-// GRANTED ON ONE PAGE.
+// GRANTED ON TWO NARROW DOCUMENTS.
 //
 // Tailwind, Lenis and the fonts were vendored precisely so no external origin
 // is a script source. A payment gateway cannot be vendored: checkout.js is
@@ -190,8 +242,9 @@ const MAP_FRAME_PAGES = (() => {
 //
 // connect-src is the one to note. `'self'` alone is this site's strongest
 // single control — it is the exfiltration channel, and it is otherwise shut.
-// Widening it at all is a real cost, which is why it is widened on the
-// checkout page only and to two named hosts rather than to *.razorpay.com.
+// Widening it at all is a real cost, which is why it is widened only on the
+// checkout page and its dedicated payment-tab host, and to two named hosts
+// rather than to *.razorpay.com.
 const RAZORPAY_PAGES = (() => {
     const pages = htmlPagesContaining('data-razorpay-checkout');
     console.log(`CSP: Razorpay checkout granted on ${pages.size} page(s).`);
@@ -251,6 +304,7 @@ function securityHeaders(req, res, next) {
     };
 
     directives.set('frame-src', ["'none'"]);
+    grant('script-src', ["'unsafe-hashes'", ...EVENT_HANDLER_HASHES, ...(INLINE_SCRIPT_HASHES.get(req.path) || [])]);
 
     if (MAP_FRAME_PAGES.has(req.path)) {
         grant('frame-src', ['https://maps.google.com', 'https://www.google.com']);

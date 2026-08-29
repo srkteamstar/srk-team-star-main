@@ -21,7 +21,7 @@
 const { findActiveProductsByIds } = require('../../products/products.public');
 const { optionalId } = require('../../../shared/validation');
 const { priceNumber, round2 } = require('../../../shared/money');
-const { GST_RATE, SHIPPING_FLAT, SHIPPING_FREE_ABOVE, TAXABLE_INCLUDES_SHIPPING, MAX_LINE_QUANTITY, MAX_CHECKOUT_LINES } = require('../../../core/config/commercial');
+const { GST_RATE, SHIPPING_FREE_ABOVE, TAXABLE_INCLUDES_SHIPPING, SHIPPING_COLLECT_ON_DELIVERY, MAX_LINE_QUANTITY, MAX_CHECKOUT_LINES } = require('../../../core/config/commercial');
 
 // Turns whatever the browser sent into a priced, validated order — or into
 // the list of reasons it cannot be one. Shared by both routes below, which is
@@ -103,7 +103,11 @@ async function priceCheckout(rawItems) {
     }
 
     const subtotal = round2(lines.reduce((sum, line) => sum + line.line_total, 0));
-    const shipping = subtotal > 0 && subtotal < SHIPPING_FREE_ABOVE ? SHIPPING_FLAT : 0;
+    // Delivery below the threshold is agreed and collected at delivery, so it
+    // is disclosed but never included in the online/COD order total here.
+    const shippingIsFree = subtotal > 0 && subtotal >= SHIPPING_FREE_ABOVE;
+    const shippingDueOnDelivery = subtotal > 0 && !shippingIsFree && SHIPPING_COLLECT_ON_DELIVERY;
+    const shipping = 0;
     const taxable = round2(TAXABLE_INCLUDES_SHIPPING ? subtotal + shipping : subtotal);
     const tax = round2(taxable * GST_RATE);
     const total = round2(subtotal + shipping + tax);
@@ -115,7 +119,8 @@ async function priceCheckout(rawItems) {
         totals: {
             subtotal,
             shipping,
-            shipping_is_free: subtotal > 0 && shipping === 0,
+            shipping_is_free: shippingIsFree,
+            shipping_due_on_delivery: shippingDueOnDelivery,
             shipping_free_above: SHIPPING_FREE_ABOVE,
             gst_rate: GST_RATE,
             tax,

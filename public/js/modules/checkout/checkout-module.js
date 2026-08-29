@@ -563,7 +563,9 @@
         const totals = priced.totals;
         const gstLabel = 'GST (' + Math.round(totals.gst_rate * 100) + '%)';
 
-        const shippingValue = totals.shipping > 0
+        const shippingValue = totals.shipping_due_on_delivery
+            ? 'Pay on delivery'
+            : totals.shipping > 0
             ? formatAmount(totals.shipping)
             : (totals.shipping_is_free ? 'Free' : '—');
 
@@ -586,8 +588,8 @@
             totalsRow('Delivery', shippingValue),
             totalsRow(gstLabel, formatAmount(totals.tax)),
             totalsRow('Total', formatAmount(totals.total), { strong: true }),
-            totals.shipping > 0
-                ? '            <p class="text-[11px] text-[#1f271b]/45 pt-1 leading-relaxed">Delivery is free on orders over ' + escapeHtml(formatAmount(totals.shipping_free_above)) + '.</p>'
+            totals.shipping_due_on_delivery
+                ? '            <p class="text-[11px] text-[#1f271b]/45 pt-1 leading-relaxed">The delivery charge is confirmed and collected at delivery. Delivery is free on purchases of ' + escapeHtml(formatAmount(totals.shipping_free_above)) + ' or more.</p>'
                 : '',
             '        </div>',
 
@@ -1236,6 +1238,40 @@
         banner.classList.remove('hidden');
     }
 
+    function openPaymentWindow() {
+        const paymentWindow = window.open('/store/payment.html', '_blank');
+        if (!paymentWindow) return null;
+
+        // The new tab is opened synchronously from the customer's click, before
+        // either checkout request begins, so browser popup protection does not
+        // mistake it for an unsolicited window. It stays same-origin and holds
+        // only a waiting screen plus Razorpay's own iframe; card details never
+        // enter this document or the original checkout page.
+        paymentWindow.focus();
+        return paymentWindow;
+    }
+
+    function closePaymentWindow(paymentWindow) {
+        try {
+            if (paymentWindow && !paymentWindow.closed) paymentWindow.close();
+        } catch (error) {}
+    }
+
+    function showPaymentDialog(options) {
+        const close = chrome.openChoiceDialog({
+            idPrefix: options.idPrefix,
+            title: options.title,
+            body: '<p>' + escapeHtml(options.message) + '</p>',
+            dismissible: options.dismissible !== false,
+            actions: options.actions
+        });
+
+        // A different site dialog can briefly be closing when the gateway
+        // result arrives. The form banner is the accessible fallback, so a
+        // status is never lost merely because the richer popup was busy.
+        if (!close) showBanner(options.message);
+    }
+
     // Split from setBusy so changing the payment method can relabel the button
     // WITHOUT touching `placing`. setBusy(false) would have cleared it, and a
     // card click mid-submit would then have re-enabled the button under a
@@ -1289,6 +1325,49 @@
             return;
         }
 
+        saveDraft();
+
+        // A failed or dismissed attempt keeps the same gateway order in hand.
+        // Retrying it must not create a duplicate storefront order.
+        if (pendingPayment && paymentsEnabled() && paymentMode === 'online') {
+            const retryWindow = openPaymentWindow();
+            if (!retryWindow) {
+                showBanner('Your browser blocked the payment tab. Allow popups for this site and try again.');
+                return;
+            }
+            setBusy(true);
+            return startPayment(retryWindow);
+        }
+
+        // If an earlier payment window was dismissed and the customer has now
+        // chosen pay-on-receipt, close the unpaid gateway order first. The
+        // server checks Razorpay before allowing this, so a late capture can
+        // never be overwritten by a second order.
+        if (pendingPayment && paymentMode !== 'online') {
+            setBusy(true);
+            try {
+                const cancellation = await requestOrderCancellation(pendingPayment);
+                if (!cancellation.response.ok) {
+                    setBusy(false);
+                    showBanner((cancellation.payload && cancellation.payload.error) || 'We could not close the earlier payment attempt. Please try again.');
+                    return;
+                }
+                rememberPending(null);
+            } catch (error) {
+                setBusy(false);
+                showBanner('We could not close the earlier payment attempt. Check your connection and try again.');
+                return;
+            }
+        }
+
+        const paymentWindow = paymentsEnabled() && paymentMode === 'online'
+            ? openPaymentWindow()
+            : null;
+        if (paymentsEnabled() && paymentMode === 'online' && !paymentWindow) {
+            showBanner('Your browser blocked the payment tab. Allow popups for this site and try again.');
+            return;
+        }
+
         setBusy(true);
 
         const body = readForm();
@@ -1321,12 +1400,14 @@
             payload = await response.json().catch(() => null);
         } catch (error) {
             console.error('Checkout request failed.', error);
+            closePaymentWindow(paymentWindow);
             setBusy(false);
             showBanner('Could not reach the server. Check your connection and try again.');
             return;
         }
 
         if (!response.ok) {
+            closePaymentWindow(paymentWindow);
             setBusy(false);
 
             // The catalogue moved under the customer between pricing and
@@ -1364,9 +1445,10 @@
             // strings — so the modal would lose its prefill precisely on the
             // retry where the customer least wants to retype.
             rememberPending(Object.assign({}, payload, { contact: Object.assign({}, body.contact) }));
-            clearDraft();
-            return startPayment();
+            return startPayment(paymentWindow);
         }
+
+        closePaymentWindow(paymentWindow);
 
         // Only once the server has confirmed. Clearing earlier would lose the
         // basket on a request that then failed.
@@ -1377,8 +1459,9 @@
 
     // Opens the gateway for whatever is in pendingPayment — a fresh order, or
     // one the customer closed the modal on and came back to.
-    function startPayment() {
+    function startPayment(paymentWindow) {
         if (!pendingPayment || !window.storePayment) {
+            closePaymentWindow(paymentWindow);
             setBusy(false);
             showBanner('Online payment is unavailable right now. Please try again in a moment.');
             return;
@@ -1392,18 +1475,29 @@
             reference: order.reference,
             payment: order.payment,
             contact: order.contact || {},
+            paymentWindow: paymentWindow,
+            terminalAttemptFailure: true,
 
             // The SERVER said so. This is the only path that clears the cart.
             onPaid: (result) => {
+                closePaymentWindow(paymentWindow);
                 rememberPending(null);
                 setBusy(false);
                 cart.clear();
+                clearDraft();
                 paint(placedHTML({
                     reference: (result && result.reference) || order.reference,
                     order_id: (result && result.order_id) || order.order_id,
                     order_access_token: order.order_access_token,
                     customer: order.customer
                 }));
+                showPaymentDialog({
+                    idPrefix: 'payment-success',
+                    title: 'Payment successful',
+                    message: 'Your payment was confirmed and order ' + ((result && result.reference) || order.reference) + ' has been placed.',
+                    dismissible: false,
+                    actions: [{ label: 'View order', primary: true }]
+                });
             },
 
             // One attempt failed and the modal is still open on its retry
@@ -1413,27 +1507,107 @@
 
             // Closed without paying. The order is real and unpaid, and the
             // screen says so rather than pretending either way.
-            onDismissed: () => {
+            onDismissed: async () => {
+                closePaymentWindow(paymentWindow);
                 setBusy(false);
-                paint(awaitingHTML(order.reference, 'You closed the payment window before it finished.'));
+                paintCheckout();
+                showPaymentDialog({
+                    idPrefix: 'payment-dismissed',
+                    title: 'Payment window closed',
+                    message: 'No payment was confirmed. Your checkout details are unchanged, and you can retry the same order whenever you are ready.',
+                    actions: [
+                        { label: 'Choose another method' },
+                        { label: 'Try payment again', primary: true, onPick: () => {
+                            const form = document.getElementById('checkout-form');
+                            if (form) form.requestSubmit();
+                        } }
+                    ]
+                });
             },
 
             // `info.settling` is the module's structured verdict on whether
             // money may already have moved — never inferred from the wording.
-            onFailed: (message, info) => {
-                setBusy(false);
+            onFailed: async (message, info) => {
+                closePaymentWindow(paymentWindow);
 
                 // The provider took the payment but our server has not managed
                 // to confirm it yet. This must never be presented as a
                 // failure: that is how a customer pays twice.
                 if (info && info.settling) {
+                    setBusy(false);
                     rememberPending(null);
                     cart.clear();
+                    clearDraft();
                     return paint(settlingHTML(message));
                 }
 
-                paint(awaitingHTML(order.reference, message));
+                await returnToCheckoutAfterFailure(order, message);
             }
+        });
+    }
+
+    async function requestOrderCancellation(order, reason) {
+        const response = await fetch('/api/orders/' + encodeURIComponent(order.order_id) + '/cancel', {
+            method: 'POST',
+            credentials: 'include',
+            headers: Object.assign(
+                { 'Content-Type': 'application/json' },
+                order.order_access_token ? { 'X-Order-Access-Token': order.order_access_token } : {}
+            ),
+            body: JSON.stringify({ reason: reason || 'customer_cancelled' })
+        });
+        const payload = await response.json().catch(() => null);
+        return { response, payload };
+    }
+
+    async function returnToCheckoutAfterFailure(order, message) {
+        let cancellation = null;
+        try {
+            // This is not an abandoned modal: Razorpay has emitted its
+            // terminal payment.failed event. Tell the server so it can mark
+            // the zero-money row as a failed checkout attempt and keep it out
+            // of both customer and staff order lists.
+            cancellation = await requestOrderCancellation(order, 'payment_failed');
+        } catch (error) {
+            console.error('Failed-payment cancellation request failed.', error);
+        }
+
+        if (cancellation && cancellation.response.ok) {
+            rememberPending(null);
+        } else if (cancellation && cancellation.response.status === 409) {
+            // The server rechecked Razorpay and found that money may have moved.
+            // Never invite a second payment in that state.
+            setBusy(false);
+            rememberPending(null);
+            cart.clear();
+            clearDraft();
+            paint(settlingHTML((cancellation.payload && cancellation.payload.error) || message));
+            return;
+        }
+
+        setBusy(false);
+        if (cancellation && cancellation.response.ok) {
+            await start();
+        } else {
+            // The unpaid order is still in hand, so repaint the editable draft
+            // without asking resumeIfPending() to replace it with the old
+            // awaiting-payment notice. Submitting online retries this same
+            // order; switching to pay-on-receipt first asks the server to close
+            // it, so this form cannot create a duplicate.
+            paintCheckout();
+        }
+        const failureMessage = message || 'That payment did not go through.';
+        showPaymentDialog({
+            idPrefix: 'payment-failed',
+            title: 'Payment unsuccessful',
+            message: failureMessage + ' Your checkout details are unchanged. Try again or choose a different payment method.',
+            actions: [
+                { label: 'Choose another method' },
+                { label: 'Try again', primary: true, onPick: () => {
+                    const form = document.getElementById('checkout-form');
+                    if (form) form.requestSubmit();
+                } }
+            ]
         });
     }
 
@@ -1461,15 +1635,9 @@
 
         let response, payload;
         try {
-            response = await fetch('/api/orders/' + encodeURIComponent(order.order_id) + '/cancel', {
-                method: 'POST',
-                credentials: 'include',
-                headers: Object.assign(
-                    { 'Content-Type': 'application/json' },
-                    order.order_access_token ? { 'X-Order-Access-Token': order.order_access_token } : {}
-                )
-            });
-            payload = await response.json().catch(() => null);
+            const cancellation = await requestOrderCancellation(order);
+            response = cancellation.response;
+            payload = cancellation.payload;
         } catch (error) {
             console.error('Cancel request failed.', error);
             // Repainted, not showBanner()'d: the notice screens render no
@@ -1521,7 +1689,13 @@
         // Reopens the SAME Razorpay order. Not start(), which would price a
         // fresh cart and create a second order for goods the customer has
         // already got one open for.
-        if (target.id === 'checkout-resume-payment') return startPayment();
+        if (target.id === 'checkout-resume-payment') {
+            const paymentWindow = openPaymentWindow();
+            if (!paymentWindow) {
+                return paint(awaitingHTML(pendingPayment && pendingPayment.reference, 'Your browser blocked the payment tab. Allow popups for this site and try again.'));
+            }
+            return startPayment(paymentWindow);
+        }
 
         if (target.id === 'checkout-cancel-order') return cancelPendingOrder(target);
 

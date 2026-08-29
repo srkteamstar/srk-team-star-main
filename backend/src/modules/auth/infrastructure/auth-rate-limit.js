@@ -8,11 +8,11 @@
  * second door would only hand an attacker twice as many attempts at the same
  * user_profiles table.
  */
-const rateLimit = require('express-rate-limit');
+const { storefrontRateLimit } = require('../../../core/http/rate-limit');
 
 // Authentication is credentialed, but rate limiting still bounds guessing and
 // account enumeration. Tighter than the form limiter, not looser.
-const authLimiter = rateLimit({
+const authLimiter = storefrontRateLimit('auth', {
     windowMs: 15 * 60 * 1000,
     max: 20,
     message: { error: "Too many attempts. Try again in a few minutes." }

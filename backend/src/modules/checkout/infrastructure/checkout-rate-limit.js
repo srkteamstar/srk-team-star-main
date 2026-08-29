@@ -2,7 +2,7 @@
  * modules/checkout/infrastructure/checkout-rate-limit.js
  * ============================================================================
  */
-const rateLimit = require('express-rate-limit');
+const { storefrontRateLimit } = require('../../../core/http/rate-limit');
 
 // Two limiters, not one shared instance. An express-rate-limit instance keeps
 // a single counter per IP, so using one for both routes meant that merely
@@ -12,13 +12,13 @@ const rateLimit = require('express-rate-limit');
 // out of placing the order they had just fixed.
 //
 // Pricing is a read and is cheap; placing an order writes five rows.
-const summaryLimiter = rateLimit({
+const summaryLimiter = storefrontRateLimit('checkout-summary', {
     windowMs: 15 * 60 * 1000,
     max: 60,
     message: { error: "Too many requests. Try again in a few minutes." }
 });
 
-const checkoutLimiter = rateLimit({
+const checkoutLimiter = storefrontRateLimit('checkout-create', {
     windowMs: 15 * 60 * 1000,
     max: 15,
     message: { error: "Too many checkout attempts. Try again in a few minutes." }

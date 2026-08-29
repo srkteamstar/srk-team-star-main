@@ -1121,6 +1121,18 @@
             event.preventDefault();
             open(id);
         }, true);
+
+        document.addEventListener('keydown', (event) => {
+            if (event.key !== 'Enter' && event.key !== ' ') return;
+            const target = event.target;
+            if (!target || !target.closest) return;
+            const card = target.closest('article[data-product-id]');
+            if (!card || target !== card) return;
+
+            event.preventDefault();
+            const id = card.getAttribute('data-product-id');
+            if (id) open(id);
+        }, true);
     }
 
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', attach);

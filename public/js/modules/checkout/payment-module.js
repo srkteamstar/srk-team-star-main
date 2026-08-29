@@ -23,17 +23,17 @@
    served and updated by Razorpay, and card details being entered inside their
    iframe rather than this origin is what keeps this site out of PCI scope.
 
-   So it is a genuine exception — and it is confined to the checkout page by
-   the same per-document CSP scan that grants the embedded Google map. The
-   <script> tag is NOT in the served markup. It is injected by the first
-   payment attempt. A visitor who opens the checkout page and leaves, or who
-   never gets as far as paying, has told Razorpay nothing. Before that click
-   nothing leaves this origin.
+   So it is a genuine exception — and it is confined to checkout plus the
+   dedicated payment tab by the same per-document CSP scan that grants the
+   embedded Google map. The <script> tag is NOT in either served document. It
+   is injected by the first payment attempt. A visitor who opens checkout and
+   leaves, or who never gets as far as paying, has told Razorpay nothing.
+   Before that click nothing leaves this origin.
 
-   The server grants Razorpay's CSP directives on this page only, and works out
-   which page that is by reading the HTML for `data-razorpay-checkout` — the
-   same read-rather-than-write pattern as the map. See RAZORPAY_PAGES in
-   server.js.
+   The server grants Razorpay's CSP directives only on checkout and its small
+   payment-tab host, and discovers both by reading their HTML for
+   `data-razorpay-checkout` — the same read-rather-than-write pattern as the
+   map. See RAZORPAY_PAGES in security-headers.js.
 
    NO AMOUNT IS PASSED TO RAZORPAY
    -------------------------------
@@ -53,22 +53,51 @@
     const BRAND_COLOUR = '#d4af37';
     const BRAND_NAME = 'SRK Team Star';
 
-    // One in-flight load shared by every caller. Without this, a customer who
-    // double-clicks Place Order injects the script twice and races two
-    // Razorpay globals.
-    let scriptPromise = null;
+    // One in-flight load per browser window. Checkout deliberately opens the
+    // gateway in a separate tab so the original checkout page remains in
+    // place. A WeakMap keeps the two documents independent without retaining
+    // a closed payment tab.
+    const scriptPromises = new WeakMap();
 
-    function loadCheckoutScript() {
-        if (window.Razorpay) return Promise.resolve(window.Razorpay);
-        if (scriptPromise) return scriptPromise;
+    function paymentHostReady(host) {
+        return new Promise((resolve, reject) => {
+            const deadline = Date.now() + 10000;
 
-        scriptPromise = new Promise((resolve, reject) => {
-            const script = document.createElement('script');
+            function check() {
+                try {
+                    if (host.closed) return reject(new Error('The payment tab was closed.'));
+                    if (host.location.pathname === '/store/payment.html' && host.document.readyState !== 'loading') {
+                        return resolve();
+                    }
+                } catch (error) {
+                    // The tab is between documents. It will become same-origin
+                    // again when the payment host finishes loading.
+                }
+
+                if (Date.now() >= deadline) return reject(new Error('The payment tab did not finish loading.'));
+                window.setTimeout(check, 25);
+            }
+
+            check();
+        });
+    }
+
+    async function loadCheckoutScript(targetWindow) {
+        const host = targetWindow || window;
+        if (host.closed) return Promise.reject(new Error('The payment tab was closed.'));
+        if (host !== window) await paymentHostReady(host);
+        if (host.Razorpay) return Promise.resolve(host.Razorpay);
+
+        const inFlight = scriptPromises.get(host);
+        if (inFlight) return inFlight;
+
+        const scriptPromise = new Promise((resolve, reject) => {
+            const script = host.document.createElement('script');
             script.src = SCRIPT_URL;
             script.async = true;
 
             script.onload = () => {
-                if (window.Razorpay) resolve(window.Razorpay);
+                if (host.Razorpay) resolve(host.Razorpay);
                 else reject(new Error('Razorpay checkout loaded but did not register.'));
             };
 
@@ -77,13 +106,14 @@
             // something. Cleared so a later attempt can try again rather than
             // inheriting this failure.
             script.onerror = () => {
-                scriptPromise = null;
+                scriptPromises.delete(host);
                 reject(new Error('Could not load the payment provider.'));
             };
 
-            document.head.appendChild(script);
+            host.document.head.appendChild(script);
         });
 
+        scriptPromises.set(host, scriptPromise);
         return scriptPromise;
     }
 
@@ -133,6 +163,9 @@
         const settings = options || {};
         const payment = settings.payment || {};
         const contact = settings.contact || {};
+        const paymentWindow = settings.paymentWindow && !settings.paymentWindow.closed
+            ? settings.paymentWindow
+            : window;
 
         const onPaid = typeof settings.onPaid === 'function' ? settings.onPaid : function () {};
         const onFailed = typeof settings.onFailed === 'function' ? settings.onFailed : function () {};
@@ -146,7 +179,7 @@
 
         let Razorpay;
         try {
-            Razorpay = await loadCheckoutScript();
+            Razorpay = await loadCheckoutScript(paymentWindow);
         } catch (error) {
             console.error('Razorpay script failed to load.', error);
             // Nothing was charged: the modal never opened.
@@ -235,13 +268,22 @@
         });
 
         // Razorpay reports a failed attempt separately from the handler. The
-        // modal stays open on its own retry screen, so this must NOT settle
-        // and must not be treated as terminal — see onAttemptFailed above.
+        // ordinary embedded flow can keep its retry screen open. Checkout's
+        // separate-tab flow opts into a terminal failure instead: the payment
+        // tab closes and the unchanged checkout form becomes the safe place to
+        // try again or choose another method.
         if (typeof instance.on === 'function') {
             instance.on('payment.failed', function (event) {
                 const description = event && event.error && event.error.description;
                 console.warn('Razorpay reported a failed payment.', event && event.error);
-                onAttemptFailed(description || 'That payment did not go through. You can try another method.');
+                const message = description || 'That payment did not go through. You can try another method.';
+                if (settings.terminalAttemptFailure) {
+                    if (settled) return;
+                    settled = true;
+                    onFailed(message, { settling: false, attemptFailed: true });
+                    return;
+                }
+                onAttemptFailed(message);
             });
         }
 

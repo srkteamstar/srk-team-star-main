@@ -68,8 +68,8 @@ const checkoutSignature = (gatewayOrderId, paymentId) =>
 
 // Product 1 is priced '1000' in the stub; product 2 is 'On request'.
 //
-// No expected total is written down here on purpose. GST_RATE, SHIPPING_FLAT
-// and SHIPPING_FREE_ABOVE are commercial constants the business changes, and a
+// No expected total is written down here on purpose. GST_RATE and
+// SHIPPING_FREE_ABOVE are commercial constants the business changes, and a
 // suite that hardcodes the figure they produce fails on a correct edit and
 // teaches everyone to ignore it. Every assertion below derives the amount from
 // the server's own answer instead.
@@ -153,7 +153,7 @@ async function sendWebhook(eventId, event, entity, options) {
     const orderA = { id: r.body.order_id, ref: r.body.reference, ...r.body.payment };
 
     // DERIVED, NOT HARDCODED. This asserted `=== 295000` and broke the moment
-    // SHIPPING_FLAT was changed — which is a legitimate configuration change,
+    // a commercial setting was changed — which is a legitimate configuration change,
     // not a regression. Worse, the magic number was testing the commercial
     // constants rather than the property that actually matters here:
     //
@@ -297,6 +297,34 @@ async function sendWebhook(eventId, event, entity, options) {
     r = await sendWebhook('evt_real_1', 'payment.captured', entity);
     check('the SAME delivery again is a 200 no-op, not a second payment',
         r.status === 200 && r.body.duplicate === true, JSON.stringify(r.body));
+
+    const retryOrderResponse = await placeOrder(accountA, 1);
+    const retryOrder = { id: retryOrderResponse.body.order_id, ...retryOrderResponse.body.payment };
+    const retryPayment = `pay_captured_${retryOrder.amount_paise}_${retryOrder.gateway_order_id}`;
+    const retryEntity = {
+        id: retryPayment,
+        order_id: retryOrder.gateway_order_id,
+        amount: retryOrder.amount_paise,
+        currency: 'INR',
+        status: 'captured',
+        method: 'upi',
+        notes: { order_id: String(retryOrder.id) }
+    };
+
+    control.failNextGatewayPaymentFetch();
+    r = await sendWebhook('evt_retryable_1', 'payment.captured', retryEntity);
+    check('a transient webhook failure is answered non-2xx so Razorpay retries',
+        r.status === 503, JSON.stringify(r.body));
+
+    r = await sendWebhook('evt_retryable_1', 'payment.captured', retryEntity);
+    check('the same stored event is processed again and succeeds after recovery',
+        r.status === 200 && r.body.received === true && !r.body.duplicate, JSON.stringify(r.body));
+
+    const retryMine = await req(accountA, 'GET', '/api/orders/mine');
+    const retried = (retryMine.body || []).find(order => order.id === retryOrder.id);
+    check('the retried event settles the order exactly once',
+        retried && retried.payment_status === 'Paid' && retried.status === 'Processing',
+        JSON.stringify(retried && { s: retried.status, p: retried.payment_status }));
 
     console.log('\n=== 5. NOTHING A BROWSER CAN REACH SETS "Paid" ===');
 
@@ -467,20 +495,22 @@ async function sendWebhook(eventId, event, entity, options) {
 
     control.reset();
 
-    // ---- The ordinary case ------------------------------------------------
-    r = await req(onlineBuyer, 'POST', `/api/orders/${onlineOrderId}/cancel`);
-    check('the owner can cancel an unpaid order the gateway has no money for',
-        r.status === 200 && r.body && r.body.cancelled === true,
+    // ---- A definitive failed checkout -------------------------------------
+    r = await req(onlineBuyer, 'POST', `/api/orders/${onlineOrderId}/cancel`, { reason: 'payment_failed' });
+    check('a confirmed zero-money failure is closed as a checkout attempt',
+        r.status === 200 && r.body && r.body.cancelled === true && r.body.discarded === true,
         `${r.status} ${JSON.stringify(r.body).slice(0, 140)}`);
 
     mine = await req(onlineBuyer, 'GET', '/api/orders/mine');
     const cancelled = (mine.body || []).find(o => o.id === onlineOrderId);
 
-    check('...the order reads Cancelled afterwards',
-        cancelled && cancelled.status === 'Cancelled', JSON.stringify(cancelled && cancelled.status));
-    check('...and stops offering a handshake or a cancel',
-        cancelled && !cancelled.payment && cancelled.can_cancel === false,
-        JSON.stringify(cancelled && { p: cancelled.payment, c: cancelled.can_cancel }));
+    check('...and is absent from the customer order list',
+        !cancelled, JSON.stringify(cancelled));
+
+    r = await req(onlineBuyer, 'POST', `/api/orders/${onlineOrderId}/cancel`, { reason: 'payment_failed' });
+    check('retrying the failed-attempt cleanup is idempotent',
+        r.status === 200 && r.body && r.body.discarded === true,
+        `${r.status} ${JSON.stringify(r.body).slice(0, 140)}`);
 
     // Idempotent, and reported as success. A double-click, or a retry after a
     // dropped response, must not read as a failure for work already done.
@@ -488,6 +518,27 @@ async function sendWebhook(eventId, event, entity, options) {
     check('cancelling the same order again is a success, not an error',
         r.status === 200 && r.body && r.body.already === true,
         `${r.status} ${JSON.stringify(r.body).slice(0, 140)}`);
+
+    // The gateway can capture in the final instant after its order check but
+    // before cancellation commits. Settlement and cancellation now serialize
+    // in Postgres; a capture that arrives after Cancelled becomes an explicit
+    // Payment Review rather than the contradictory Paid + Cancelled pair.
+    const latePaymentId = `pay_captured_${online.payment.amount_paise}_${online.payment.gateway_order_id}`;
+    r = await sendWebhook('evt_capture_after_cancel', 'payment.captured', {
+        id: latePaymentId,
+        order_id: online.payment.gateway_order_id,
+        amount: online.payment.amount_paise,
+        currency: 'INR', status: 'captured', method: 'upi',
+        notes: { order_id: String(onlineOrderId) }
+    });
+    check('a capture arriving after cancellation is accepted for operator review',
+        r.status === 200 && r.body.received === true, JSON.stringify(r.body));
+
+    mine = await req(onlineBuyer, 'GET', '/api/orders/mine');
+    const lateCapture = (mine.body || []).find(o => o.id === onlineOrderId);
+    check('...and cannot leave the order Paid and Cancelled',
+        lateCapture && lateCapture.payment_status === 'Paid' && lateCapture.status === 'Payment Review',
+        JSON.stringify(lateCapture && { s: lateCapture.status, p: lateCapture.payment_status }));
 
     // ---- The two refusals that protect fulfilment and money ---------------
     r = await req(codBuyer, 'POST', `/api/orders/${cod.id}/cancel`);

@@ -58,6 +58,7 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
 
 const { createClient } = require('@supabase/supabase-js');
 const razorpay = require('../src/core/gateways/razorpay');
+const { operationalEvent } = require('../src/core/observability/operations');
 
 const db = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 
@@ -244,10 +245,23 @@ async function main() {
     console.log('-'.repeat(72) + '\n');
 
     // A non-zero exit so this is usable from cron with a mail-on-failure rule.
-    if (!clean) process.exit(2);
+    if (!clean) {
+        await operationalEvent('payment_reconciliation_discrepancy', {
+            source: 'scheduled_reconciliation',
+            status: 'discrepancy',
+            missing_count: missingHere.length,
+            mismatch_count: mismatched.length
+        });
+        process.exitCode = 2;
+    }
 }
 
-main().catch(error => {
+main().catch(async error => {
     console.error('\nReconciliation failed:', error.message, '\n');
-    process.exit(1);
+    await operationalEvent('payment_reconciliation_failed', {
+        source: 'scheduled_reconciliation',
+        status: 'failed',
+        reason: error.message
+    });
+    process.exitCode = 1;
 });
