@@ -22,7 +22,25 @@ function publicEnquiriesController() {
     const router = express.Router();
 
     router.post('/api/submit-form', formLimiter, async (req, res) => {
-        const { form_type, full_name, company, email, phone, message } = req.body;
+        // F10: this used to destructure req.body and call .trim() on whatever
+        // came out before any of it was checked. A body that was not an
+        // object at all threw before the first line finished; a numeric name
+        // survived the optional-chain (`42?.trim` reads as "is not a
+        // function", not "is missing") and crashed the same way one property
+        // later — both straight into Express's default HTML error page
+        // instead of the JSON 400 every other bad submission here gets.
+        // Shape and type are checked before a single string method runs.
+        const body = req.body;
+        const wrongType = (value) => value !== undefined && value !== null && typeof value !== 'string';
+
+        if (!body || typeof body !== 'object' || Array.isArray(body)
+            || wrongType(body.form_type) || wrongType(body.full_name) || wrongType(body.company)
+            || wrongType(body.email) || wrongType(body.phone) || wrongType(body.message)) {
+            if (wantsRedirect(req)) return enquiryRedirect(req, res, 'failed');
+            return res.status(400).json({ error: "Required fields (Name, Email, Message) cannot be empty." });
+        }
+
+        const { form_type, full_name, company, email, phone, message } = body;
 
         if (!full_name?.trim() || !email?.trim() || !message?.trim() || !form_type?.trim()) {
             if (wantsRedirect(req)) return enquiryRedirect(req, res, 'failed');
@@ -151,7 +169,11 @@ function publicEnquiriesController() {
                 message: "Enquiry submitted successfully!"
             });
         } catch (error) {
-            console.error("Database Error (Insert):", error);
+            // S01: not the raw error — a Postgres error's message can echo the
+            // offending value back (a unique-violation, for one, often names
+            // it), and this route's whole input is a stranger's name, email,
+            // phone and message. The short code is enough to triage from.
+            console.error("Database Error (Insert):", error && error.code);
             if (wantsRedirect(req)) return enquiryRedirect(req, res, 'failed');
             res.status(500).json({ error: "An error occurred while saving your submission." });
         }
