@@ -23,7 +23,15 @@ const { PAYMENT_STATUS } = require('../../../shared/contracts/payment');
 const { orderReference } = require('../../../shared/contracts/order-reference');
 const { operationalEvent } = require('../../../core/observability/operations');
 const { gatewayPaymentRow, markOrderPaid } = require('../services/settle-payment.service');
+const { applyVerifiedRefund } = require('../services/apply-refund.service');
 const { verifyLimiter } = require('../infrastructure/payment-rate-limit');
+
+// Statuses that mean a payment already went through a real capture, whether
+// or not it has since been refunded — mirrors settle-payment.service.js's
+// own CAPTURED_STATUSES. A payment.failed delivery must never downgrade any
+// of these; only markOrderPaid() and applyVerifiedRefund() may move a row
+// between them.
+const CAPTURED_PAYMENT_STATUSES = [PAYMENT_STATUS.paid, PAYMENT_STATUS.partiallyRefunded, PAYMENT_STATUS.refunded];
 
 /** @returns {import('express').Router} */
 function paymentsController() {
@@ -134,6 +142,44 @@ function paymentsController() {
         // the question is what Razorpay actually sent — and that answer has to
         // survive the processing failing. Signature verification happened just
         // above, before this append, so forged traffic never reaches storage.
+        //
+        // WHAT GETS STORED, THOUGH, IS NOT THE RAW BODY. A real Razorpay
+        // payload can carry contact and payment-instrument metadata (see
+        // Razorpay's own webhook examples), and this table is append-only —
+        // migration 014 grants the application no way to ever delete or
+        // redact a row. So the raw bytes are verified above and then
+        // discarded; what is persisted is a versioned, allowlisted
+        // projection of exactly the identifiers and amounts reconciliation
+        // and replay need. No email, contact, VPA or card detail is ever in
+        // this shape, because it is never read out of the raw body in the
+        // first place. Bump `version` if this projection's fields change —
+        // a reader has to be able to tell which shape an old row is in.
+        const retainedPayload = {
+            version: 1,
+            event: eventType,
+            payment: paymentEntity && {
+                id: paymentEntity.id,
+                order_id: paymentEntity.order_id,
+                amount: paymentEntity.amount,
+                currency: paymentEntity.currency,
+                status: paymentEntity.status,
+                method: paymentEntity.method
+            },
+            refund: refundEntity && {
+                id: refundEntity.id,
+                payment_id: refundEntity.payment_id,
+                amount: refundEntity.amount,
+                currency: refundEntity.currency,
+                status: refundEntity.status
+            },
+            order: orderEntity && {
+                id: orderEntity.id,
+                amount: orderEntity.amount,
+                currency: orderEntity.currency,
+                status: orderEntity.status
+            }
+        };
+
         let eventRow = null;
         try {
             const inserted = await supabase.from('payment_events').insert([{
@@ -146,7 +192,7 @@ function paymentsController() {
                 gateway_order_id: (paymentEntity && paymentEntity.order_id) || (orderEntity && orderEntity.id) || null,
                 gateway_payment_id: (paymentEntity && paymentEntity.id) || (refundEntity && refundEntity.payment_id) || null,
                 order_id: null,
-                payload: body,
+                payload: retainedPayload,
                 signature_verified: true
             }]).select().single();
 
@@ -264,9 +310,11 @@ function paymentsController() {
             } else if (eventType === 'payment.failed') {
                 if (orderId !== null && paymentEntity) {
                     const row = await gatewayPaymentRow(orderId);
-                    // Never downgrade a Paid row: a failed attempt can legitimately
-                    // arrive after a successful retry on the same order.
-                    if (row && row.status !== PAYMENT_STATUS.paid) {
+                    // Never downgrade an already-captured row: a failed attempt can
+                    // legitimately arrive after a successful retry on the same
+                    // order, and — the same shape of bug F04 closed for capture
+                    // settlement — after a refund has moved it past Paid entirely.
+                    if (row && !CAPTURED_PAYMENT_STATUSES.includes(row.status)) {
                         await supabase.from('payments')
                             .update({ status: PAYMENT_STATUS.failed, transaction_id: paymentEntity.id })
                             .eq('id', row.id);
@@ -278,16 +326,63 @@ function paymentsController() {
                 // refund path in this codebase and there must not be one — a refund
                 // is an action taken in the Razorpay dashboard, and this event is
                 // how the ledger learns it happened.
-                if (orderId !== null && refundEntity) {
+                //
+                // Deduplicated by Razorpay's own refund id (migration 034), not by
+                // whether THIS delivery previously finished — two overlapping or
+                // redelivered copies of the same refund must not both add their
+                // amount. And because Razorpay does not guarantee webhook order, the
+                // matching capture may not have settled here yet; that is reported
+                // back explicitly rather than assumed to have failed.
+                if (orderId === null || !refundEntity) {
+                    await finish('no order could be resolved from this refund event');
+                } else {
                     const row = await gatewayPaymentRow(orderId);
-                    if (row) {
-                        const full = Number(refundEntity.amount) >= Number(row.amount_paise);
-                        await supabase.from('payments')
-                            .update({ status: full ? 'Refunded' : 'Partially Refunded' })
-                            .eq('id', row.id);
+                    if (!row) {
+                        await leaveRetryable('no_payment_row');
+                        await operationalEvent('payment_webhook_retryable_failure', {
+                            event_id: eventId, event_type: eventType, order_id: orderId,
+                            refund_id: refundEntity.id, reason: 'no_payment_row'
+                        });
+                        return res.status(503).json({ error: "Refund settlement is temporarily unavailable." });
                     }
+
+                    const refundResult = await applyVerifiedRefund({
+                        orderId,
+                        paymentId: row.id,
+                        gateway: 'razorpay',
+                        gatewayOrderId: gatewayOrderId,
+                        gatewayPaymentId: (paymentEntity && paymentEntity.id) || refundEntity.payment_id,
+                        refundId: refundEntity.id,
+                        amountPaise: refundEntity.amount,
+                        currency: refundEntity.currency,
+                        refundStatus: refundEntity.status
+                    });
+
+                    if (!refundResult.ok) {
+                        // A binding mismatch or an inconsistent duplicate id — a bug
+                        // or an attempt, not something a retry fixes. Recorded and
+                        // acknowledged so Razorpay stops redelivering it.
+                        console.error(`REFUND REJECTED (webhook:${eventType}): order ${orderId}, refund ${refundEntity.id}: ${refundResult.reason}`);
+                        await finish(`rejected:${refundResult.reason}`);
+                        return res.status(200).json({ received: true, rejected: true });
+                    }
+
+                    if (refundResult.notYetApplicable) {
+                        // The matching capture has not settled here yet. NOTHING was
+                        // written — not even the refund ledger row — so processed_at
+                        // stays null and this exact delivery (or Razorpay's retry of
+                        // it) is free to apply once the capture lands. Swallowing
+                        // this as success is exactly how F05 let a refund vanish.
+                        await leaveRetryable('refund_waiting_for_local_capture');
+                        await operationalEvent('payment_webhook_retryable_failure', {
+                            event_id: eventId, event_type: eventType, order_id: orderId,
+                            refund_id: refundEntity.id, reason: 'refund_waiting_for_local_capture'
+                        });
+                        return res.status(503).json({ error: "Refund settlement is temporarily unavailable." });
+                    }
+
+                    await finish(null);
                 }
-                await finish(null);
             } else {
                 // Subscribed to something this does not act on. Recorded and
                 // acknowledged rather than retried forever.

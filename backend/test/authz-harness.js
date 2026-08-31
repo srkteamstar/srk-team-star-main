@@ -101,6 +101,11 @@ const db = {
     // stub's insert pushes into `db[table] || []`, and an absent table means
     // that push lands in a throwaway array and every row silently vanishes.
     payment_events: [],
+    // Migration 034's refund ledger. Empty for the same reason: apply_verified_refund()
+    // below pushes a row per Razorpay refund id it claims, and an absent
+    // table would silently swallow every one of them, defeating the very
+    // dedup the fixture exists to prove.
+    store_refunds: [],
     // Migration 017's per-customer cart. Empty for the same reason, and empty
     // rather than seeded on purpose: section 18 proves that one customer's
     // cart is invisible to another, and a fixture written by hand here would
@@ -402,15 +407,23 @@ const fakeSupabase = {
             const order = db.orders.find(row => String(row.id) === String(args.p_order_id));
             if (!payment || !order) return { data: null, error: { code: 'P0001', message: 'payment or order not found' } };
 
-            const already = payment.status === 'Paid';
-            if (already && String(payment.transaction_id) !== String(args.p_transaction_id)) {
-                return { data: null, error: { code: 'P0001', message: 'different transaction already settled' } };
+            // 035's fix: 'Paid' is not the only already-captured state. A
+            // later or out-of-order capture event must not regress
+            // 'Partially Refunded' / 'Refunded' back to 'Paid'.
+            const CAPTURED_STATUSES = ['Paid', 'Partially Refunded', 'Refunded'];
+            const already = CAPTURED_STATUSES.includes(payment.status);
+            if (already) {
+                if (String(payment.transaction_id) !== String(args.p_transaction_id)) {
+                    return { data: null, error: { code: 'P0001', message: 'different transaction already settled' } };
+                }
+                // Leave status exactly as the refund ledger left it.
+            } else {
+                payment.transaction_id = args.p_transaction_id;
+                payment.status = 'Paid';
+                payment.payment_method = args.p_payment_method;
+                payment.verified_at = args.p_verified_at;
             }
 
-            payment.transaction_id = args.p_transaction_id;
-            payment.status = 'Paid';
-            payment.payment_method = args.p_payment_method;
-            payment.verified_at = args.p_verified_at;
             if (order.status === 'Pending Payment') order.status = 'Processing';
             else if (order.status === 'Cancelled') order.status = 'Payment Review';
 
@@ -423,6 +436,79 @@ const fakeSupabase = {
                 },
                 error: null
             };
+        }
+
+        if (name === 'apply_verified_refund') {
+            // Mirrors migrations 034/apply_verified_refund() exactly, including
+            // its message text — payments.controller.js classifies rejections
+            // by matching a prefix of `error.message`, the same way it already
+            // does for settle_captured_store_payment's 23505.
+            const payment = db.payments.find(row => String(row.id) === String(args.p_payment_id)
+                && String(row.order_id) === String(args.p_order_id));
+            if (!payment) return { data: null, error: { code: 'P0001', message: 'payment not found for refund' } };
+
+            // gateway_order_id is set at checkout time, so it is meaningful
+            // to check regardless of capture state.
+            if (payment.gateway !== args.p_gateway
+                || String(payment.gateway_order_id) !== String(args.p_gateway_order_id)) {
+                return { data: null, error: { code: 'P0001', message: 'refund payment binding mismatch' } };
+            }
+            if (String(payment.currency) !== String(args.p_currency)) {
+                return { data: null, error: { code: 'P0001', message: 'refund currency mismatch' } };
+            }
+
+            const CAPTURED_STATUSES = ['Paid', 'Partially Refunded', 'Refunded'];
+            if (!CAPTURED_STATUSES.includes(payment.status)) {
+                // Not captured here yet — transaction_id is still null, so the
+                // transaction-id binding check below has to wait until after
+                // this gate, matching migration 034's ordering exactly.
+                // Nothing written — not even the ledger row — so a later
+                // delivery of this same refund id is free to apply once the
+                // matching capture has settled.
+                return { data: { status: 'not_yet_applicable', payment: Object.assign({}, payment) }, error: null };
+            }
+
+            // Captured, so transaction_id is now populated and meaningful.
+            if (String(payment.transaction_id) !== String(args.p_gateway_payment_id)) {
+                return { data: null, error: { code: 'P0001', message: 'refund payment binding mismatch' } };
+            }
+
+            const existing = db.store_refunds.find(row =>
+                row.gateway === args.p_gateway && row.refund_id === args.p_refund_id);
+
+            if (existing) {
+                if (String(existing.payment_id) !== String(payment.id)
+                    || Number(existing.amount_paise) !== Number(args.p_amount_paise)
+                    || existing.currency !== args.p_currency) {
+                    return { data: null, error: { code: 'P0001', message: 'refund identity mismatch' } };
+                }
+                return { data: { status: 'already_applied', payment: Object.assign({}, payment) }, error: null };
+            }
+
+            const priorSum = db.store_refunds
+                .filter(row => String(row.payment_id) === String(payment.id))
+                .reduce((sum, row) => sum + Number(row.amount_paise), 0);
+
+            if (priorSum + Number(args.p_amount_paise) > Number(payment.amount_paise)) {
+                return { data: null, error: { code: 'P0001', message: 'refund exceeds payment amount' } };
+            }
+
+            db.store_refunds.push({
+                id: ++nextId,
+                gateway: args.p_gateway,
+                refund_id: args.p_refund_id,
+                payment_id: payment.id,
+                gateway_payment_id: args.p_gateway_payment_id,
+                amount_paise: args.p_amount_paise,
+                currency: args.p_currency,
+                status: args.p_refund_status || null,
+                created_at: new Date().toISOString()
+            });
+
+            const newSum = priorSum + Number(args.p_amount_paise);
+            payment.status = newSum >= Number(payment.amount_paise) ? 'Refunded' : 'Partially Refunded';
+
+            return { data: { status: 'applied', payment: Object.assign({}, payment) }, error: null };
         }
 
         if (name === 'create_quote_request') {
