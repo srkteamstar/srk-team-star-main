@@ -65,18 +65,15 @@ async function readinessHandler(req, res) {
     // still down, or one that has since failed as still fine.
     res.setHeader('Cache-Control', 'no-store');
 
-    let timer;
     try {
-        const query = supabase.from('roles').select('id').limit(1);
-
-        // A hung socket is not a healthy dependency, and without this the
-        // probe would hang with it — which an orchestrator reads as a timeout
-        // anyway, just later and with no message saying which check stalled.
-        const timeout = new Promise((_, reject) => {
-            timer = setTimeout(() => reject(new Error('database check timed out')), READY_TIMEOUT_MS);
-        });
-
-        const { error } = await Promise.race([query, timeout]);
+        // AbortSignal.timeout actually cancels the in-flight request at
+        // READY_TIMEOUT_MS — a hung socket stops being worked on, not just
+        // stops being waited for. A bare Promise.race against a timer leaves
+        // the original query running after the response is sent, which for a
+        // probe an orchestrator polls every few seconds means work keeps
+        // piling up behind a dependency that never comes back on its own.
+        const { error } = await supabase.from('roles').select('id').limit(1)
+            .abortSignal(AbortSignal.timeout(READY_TIMEOUT_MS));
         if (error) throw error;
 
         res.status(200).json({ status: 'ready', checks: { database: 'ok' } });
@@ -88,8 +85,6 @@ async function readinessHandler(req, res) {
             checks: { database: 'unreachable' },
             detail: error && error.message ? String(error.message).slice(0, 200) : 'unknown'
         });
-    } finally {
-        clearTimeout(timer);
     }
 }
 

@@ -268,6 +268,10 @@ function makeQuery(table) {
         in(column, value) { state.filters.push({ type: 'in', column, value }); return q; },
         order(column, options) { state.order = { column, asc: !options || options.ascending !== false }; return q; },
         limit() { return q; },
+        // core/health/probes.js chains this onto a real request to cancel it
+        // at the readiness budget. The stub has nothing to abort, so it is a
+        // no-op that keeps the chain intact rather than a missing method.
+        abortSignal() { return q; },
         insert(payload) { state.op = 'insert'; state.payload = payload; return q; },
         update(payload) { state.op = 'update'; state.payload = payload; return q; },
         upsert(payload, options) {
