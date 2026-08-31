@@ -45,9 +45,10 @@
         .blog-filter-strip::-webkit-scrollbar { display: none; }
     </style>
 
+    <link rel="stylesheet" href="/assets/styles/storefront-theme.css" media="screen">
 </head>
 
-<body class="selection:bg-[#d4af37] selection:text-white">
+<body class="selection:bg-[#d4af37] selection:text-white" data-srk-page="blog">
     <header
         class="fixed w-full top-0 h-[70px] bg-white flex items-center justify-between px-6 lg:px-12 z-50 transition-all duration-500 ease-in-out border-b border-[#12170f]/10">
         <nav aria-label="Main Navigation Left" class="hidden md:flex items-center">
@@ -87,7 +88,7 @@
 
     <main class="pt-[70px]">
         <section class="py-20 md:py-28">
-            <div class="max-w-7xl mx-auto px-6 text-center flex flex-col items-center">
+            <div class="srk-theme-hero max-w-7xl mx-auto px-6 text-center flex flex-col items-center">
                 <div class="w-full max-w-3xl mb-8 scroll-reveal opacity-0 -translate-y-6 transition-all duration-[1000ms] ease-out">
         <svg xmlns="http://www.w3.org/2000/svg" width="100%" height="40" viewBox="0 0 600 40" fill="none" aria-hidden="true">
             <defs>
@@ -95,9 +96,7 @@
                 <linearGradient id="blog-heading-right" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stop-color="#d4af37" stop-opacity="1"/><stop offset="100%" stop-color="#d4af37" stop-opacity="0"/></linearGradient>
             </defs>
             <line x1="20" y1="20" x2="140" y2="20" stroke="url(#blog-heading-left)" stroke-width="1.5"/>
-            <path d="M 155 25 l 4 -10 m 6 10 l 4 -10 m 6 10 l 4 -10" stroke="#d4af37" stroke-width="2" stroke-linecap="round"/>
             <text x="300" y="21" fill="#d4af37" font-family="'Schibsted Grotesk', sans-serif" font-size="14" font-weight="600" text-anchor="middle" dominant-baseline="middle">INSIGHTS FROM THE WORKSHOP</text>
-            <path d="M 421 25 l 4 -10 m 6 10 l 4 -10 m 6 10 l 4 -10" stroke="#d4af37" stroke-width="2" stroke-linecap="round"/>
             <line x1="460" y1="20" x2="580" y2="20" stroke="url(#blog-heading-right)" stroke-width="1.5"/>
         </svg>
     </div>
