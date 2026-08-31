@@ -9,19 +9,37 @@
  * It returns strictly less than the full row. asset_folder was removed
  * because it is an internal disk layout, and product_count off the categories
  * equivalent for the same reason: nothing public read either.
+ *
+ * PAGINATION IS OPT-IN. Pass ?page=1 (pageSize optional, capped at
+ * PUBLIC_PAGE_MAX) to get `{ items, page, pageSize, hasMore }` — a bounded
+ * SQL range() read, never an unbounded select(). Every caller in this
+ * repository now asks for it this way (product-section-shared-module.js's
+ * loadProducts(), and the two hero loaders' own fallback fetch, all page
+ * until hasMore is false and reconstruct the flat array their callers
+ * expect). Omitting ?page keeps the plain-array response this route has
+ * always returned, for anything outside this repository that still calls
+ * it that way — that response is still SQL-bounded underneath (see
+ * fetchProductRows() in product.repository.js), just not paginated on the
+ * wire, so it is a behaviour-preserving default rather than a silent cap.
  */
 const express = require('express');
 const { isMissingRelation, isPermissionDenied } = require('../../../core/database/postgrest-errors');
-const { publicCatalogue } = require('../services/public-catalogue.service');
+const { publicCatalogue, publicCatalogueList } = require('../services/public-catalogue.service');
 
 /** @returns {import('express').Router} */
 function publicProductsController() {
     const router = express.Router();
 
     router.get('/api/products/public', async (req, res) => {
-        try {
-            const products = await publicCatalogue();
+        const paginated = typeof req.query.page !== 'undefined';
 
+        try {
+            if (paginated) {
+                const result = await publicCatalogueList({ page: req.query.page, pageSize: req.query.pageSize });
+                return res.status(200).json(result);
+            }
+
+            const products = await publicCatalogue();
             res.status(200).json(products);
         } catch (error) {
             console.error("Fetch Public Products Error:", error);
@@ -29,7 +47,9 @@ function publicProductsController() {
             // A storefront page must not break because the table isn't set up yet.
             // Missing table and missing grants are both "not provisioned", and an
             // empty catalogue degrades better than an error banner.
-            if (isMissingRelation(error) || isPermissionDenied(error)) return res.status(200).json([]);
+            if (isMissingRelation(error) || isPermissionDenied(error)) {
+                return res.status(200).json(paginated ? { items: [], page: 1, pageSize: 0, hasMore: false } : []);
+            }
             res.status(500).json({ error: "Failed to fetch products." });
         }
     });

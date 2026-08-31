@@ -4,7 +4,7 @@ const fs = require('fs');
 const paths = require('../../../core/config/paths');
 const { escapeHtmlText: escape } = require('../../../shared/text');
 const { siteOrigin, publicPagePaths, safeImage, sendHtmlPage } = require('../../../core/http/page-metadata');
-const { publicCatalogue, selectMachineryHero } = require('../services/public-catalogue.service');
+const { publicCatalogue, publicProductBySlugOrId, selectMachineryHero } = require('../services/public-catalogue.service');
 
 // The exact string machinery-hero-loader.js's mounted media panel opens
 // with (frontend/pages/index.html) — the anchor this splices the
@@ -82,8 +82,9 @@ function productPagesController() {
     });
     router.get('/products/:slug', async (req, res) => {
         try {
-            const products = await publicCatalogue();
-            const product = products.find(row => String(row.url_slug || row.id) === req.params.slug);
+            // Indexed lookup, not a scan of the whole catalogue: one row by
+            // its url_slug, with a numeric-id fallback for old bookmarks.
+            const product = await publicProductBySlugOrId(req.params.slug);
             if (!product) return failure(req, res, 404, 'Product not found');
             const meta = metadata(product);
             const origin = siteOrigin();
@@ -110,7 +111,8 @@ function productPagesController() {
     router.get('/store/store.html', async (req, res, next) => {
         if (typeof req.query.product !== 'string') return next();
         try {
-            const product = (await publicCatalogue()).find(row => String(row.id) === req.query.product);
+            // Indexed lookup by id, not a scan of the whole catalogue.
+            const product = await publicProductBySlugOrId(req.query.product);
             if (product) res.locals.pageMetadata = metadata(product);
         } catch (_) { /* The existing client keeps its normal retry/error flow. */ }
         return next();
