@@ -515,14 +515,31 @@
     let productsPromise = null;
     let categoriesPromise = null;
 
+    // PAGES THROUGH THE CATALOGUE rather than trusting one response to be
+    // all of it — GET /api/products/public's ?page mode returns at most 50
+    // rows and says whether more remain (hasMore), specifically so nothing
+    // here has to assume a single fetch is the complete catalogue the way
+    // this used to. Every section, the cart's re-resolution and the quote
+    // picker still see one flat array from loadProducts(): the paging
+    // happens once, here, and is invisible to everything that calls it.
+    async function fetchAllProductPages() {
+        const all = [];
+        let page = 1;
+        for (;;) {
+            const response = await fetch(PRODUCTS_URL + '?page=' + page, { cache: 'no-store' });
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            const body = await response.json();
+            const items = Array.isArray(body && body.items) ? body.items : [];
+            all.push(...items);
+            if (!body || !body.hasMore) break;
+            page += 1;
+        }
+        return all;
+    }
+
     function loadProducts() {
         if (!productsPromise) {
-            productsPromise = fetch(PRODUCTS_URL, { cache: 'no-store' })
-                .then(response => {
-                    if (!response.ok) throw new Error('HTTP ' + response.status);
-                    return response.json();
-                })
-                .then(data => (Array.isArray(data) ? data : []))
+            productsPromise = fetchAllProductPages()
                 .catch(error => {
                     productsPromise = null;   // let Retry try again
                     throw error;

@@ -285,6 +285,26 @@
         start();
     }
 
+    // Only used when product-section-shared-module.js failed to load —
+    // its own loadProducts() is preferred above and already pages through
+    // GET /api/products/public's ?page mode (see that file). This mirrors
+    // the same loop rather than trusting one response to be the whole
+    // catalogue, for the same reason.
+    async function fetchAllProductsFallback() {
+        const all = [];
+        let page = 1;
+        for (;;) {
+            const response = await fetch('/api/products/public?page=' + page, { cache: 'no-store' });
+            if (!response.ok) return all;
+            const body = await response.json();
+            const items = Array.isArray(body && body.items) ? body.items : [];
+            all.push(...items);
+            if (!body || !body.hasMore) break;
+            page += 1;
+        }
+        return all;
+    }
+
     async function load() {
         const heroes = Array.prototype.slice.call(document.querySelectorAll('[data-machinery-hero]'));
         if (!heroes.length) return;
@@ -294,7 +314,7 @@
         try {
             const productRequest = shared && typeof shared.loadProducts === 'function'
                 ? shared.loadProducts()
-                : fetch('/api/products/public', { cache: 'no-store' }).then(response => response.ok ? response.json() : []);
+                : fetchAllProductsFallback();
             const categoryRequest = shared && typeof shared.loadCategories === 'function'
                 ? shared.loadCategories()
                 : fetch('/api/categories/public', { cache: 'no-store' }).then(response => response.ok ? response.json() : []);
