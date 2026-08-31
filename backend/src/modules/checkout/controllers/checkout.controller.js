@@ -293,7 +293,20 @@ function checkoutController() {
                         totals: priced.totals,
                         order_access_token: guestAccessToken,
                         customer: profile ? await publicProfile(profile) : null,
-                        payment: (paymentRow && paymentRow.gateway === 'razorpay' && paymentRow.gateway_order_id) ? {
+                        // Same rule orderStatusView() enforces for GET /api/orders/:id/status —
+                        // repeated here rather than shared because this route returns 200/201
+                        // shapes the other does not. A retry that lands after the order was
+                        // paid or cancelled must not hand back a working-looking handshake:
+                        // that reopens the Razorpay modal against an order that can never be
+                        // legitimately captured again, and a capture against it lands in
+                        // Payment Review needing manual reconciliation instead of just failing
+                        // to open.
+                        payment: (
+                            order.status === ORDER_STATUS_AWAITING_PAYMENT &&
+                            paymentRow && paymentRow.gateway === 'razorpay' &&
+                            paymentRow.status !== PAYMENT_STATUS.paid &&
+                            paymentRow.gateway_order_id
+                        ) ? {
                             key_id: razorpay.publicKeyId(),
                             gateway_order_id: paymentRow.gateway_order_id,
                             amount_paise: paymentRow.amount_paise,

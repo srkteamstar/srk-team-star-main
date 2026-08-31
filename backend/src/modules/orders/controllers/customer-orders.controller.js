@@ -398,9 +398,16 @@ function customerOrdersController() {
             // landed during the round trip to Razorpay — and this is the only
             // check that is atomic with the write.
             if (order.status !== 'Cancelled') {
+                // idempotency_key released in the same write: left in place, a
+                // stale key a browser never got the chance to rotate (see
+                // checkout-module.js's clearDraft()) would match this dead order
+                // on the very next checkout attempt and hand back its id instead
+                // of writing a genuinely new order. Nulling it here means that
+                // lookup finds nothing and a fresh order gets created instead,
+                // regardless of what any client still remembers.
                 const { data: updated, error: updateError } = await supabase
                     .from('orders')
-                    .update({ status: 'Cancelled' })
+                    .update({ status: 'Cancelled', idempotency_key: null })
                     .eq('id', order.id)
                     .eq('status', ORDER_STATUS_AWAITING_PAYMENT)
                     .select()
