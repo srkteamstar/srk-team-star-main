@@ -1,4 +1,4 @@
-const { round2 } = require('../../../shared/money');
+const { round2, toPaiseBig, fromPaiseBig, allocatePaise } = require('../../../shared/money');
 const { PAYMENT_STATUS, CURRENCY } = require('../../../shared/contracts/payment');
 const { SELLER } = require('../../../shared/contracts/seller');
 const { gstTreatment } = require('../../../shared/indian-gst');
@@ -48,17 +48,44 @@ function buildOrderInvoice({ order, items, shipping, payment }) {
         ? storedRate
         : (taxableValue ? totalTax / taxableValue : 0);
     const taxType = order.tax_type || gstTreatment(seller.state, shipping && shipping.state);
+    const splitTax = taxType === 'CGST_SGST';
 
-    let itemTaxAssigned = 0;
-    const lines = (items || []).map((item, index) => {
-        const lineTaxable = money(item.total_amount === null || item.total_amount === undefined
+    // ---- The frozen header tax (order.tax_amount — never recomputed here),
+    // allocated across every taxable line AND actual shipping in one pass.
+    //
+    // This used to round each line's tax independently and hand shipping
+    // whatever was left over after summing them — which could and did go
+    // negative on a zero-shipping order, and could leave the lines summing
+    // to something other than the frozen total. Rounding a frozen figure has
+    // to happen once, in integer paise, with a largest-remainder allocation
+    // — see allocatePaise() in shared/money.js. CGST and SGST are allocated
+    // SEPARATELY (not "total tax, then halved per line") so both their own
+    // line sums and their own header totals agree exactly, not just their
+    // combination.
+    const lineTaxableAmounts = (items || []).map((item) => money(
+        item.total_amount === null || item.total_amount === undefined
             ? Number(item.price || 0) * Number(item.quantity || 0)
-            : item.total_amount);
-        const lineTax = money(lineTaxable * taxRate);
-        itemTaxAssigned = money(itemTaxAssigned + lineTax);
-        const split = taxType === 'CGST_SGST';
-        const cgst = split ? money(lineTax / 2) : 0;
-        const sgst = split ? money(lineTax - cgst) : 0;
+            : item.total_amount
+    ));
+    const weights = [...lineTaxableAmounts, shippingAmount].map(toPaiseBig);
+    const totalTaxPaise = toPaiseBig(totalTax);
+
+    // The header CGST/SGST split, in paise, decided once before either
+    // component is allocated across the weights above. The extra paise on
+    // an odd total goes to CGST — this file's existing convention.
+    const cgstHeaderPaise = splitTax ? (totalTaxPaise + 1n) / 2n : 0n;
+    const sgstHeaderPaise = splitTax ? totalTaxPaise - cgstHeaderPaise : 0n;
+
+    const cgstShares = splitTax ? allocatePaise(cgstHeaderPaise, weights) : weights.map(() => 0n);
+    const sgstShares = splitTax ? allocatePaise(sgstHeaderPaise, weights) : weights.map(() => 0n);
+    const igstShares = splitTax ? weights.map(() => 0n) : allocatePaise(totalTaxPaise, weights);
+
+    const lines = (items || []).map((item, index) => {
+        const lineTaxable = lineTaxableAmounts[index];
+        const cgstAmt = fromPaiseBig(cgstShares[index]);
+        const sgstAmt = fromPaiseBig(sgstShares[index]);
+        const igstAmt = fromPaiseBig(igstShares[index]);
+        const lineTax = money(cgstAmt + sgstAmt + igstAmt);
 
         return {
             position: index + 1,
@@ -68,16 +95,27 @@ function buildOrderInvoice({ order, items, shipping, payment }) {
             unit_price: money(item.price),
             taxable_value: lineTaxable,
             gst_rate_percent: round2(taxRate * 100),
-            cgst_amount: cgst,
-            sgst_amount: sgst,
-            igst_amount: split ? 0 : lineTax,
+            cgst_amount: cgstAmt,
+            sgst_amount: sgstAmt,
+            igst_amount: igstAmt,
             line_total: money(lineTaxable + lineTax)
         };
     });
 
-    const splitTax = taxType === 'CGST_SGST';
-    const cgst = splitTax ? money(totalTax / 2) : 0;
-    const sgst = splitTax ? money(totalTax - cgst) : 0;
+    // Shipping is the LAST weight, and its share of tax is read from the
+    // same allocation the lines came from — a real weight in the split, not
+    // an unexplained bucket that absorbs whatever the lines did not use.
+    const shippingIdx = weights.length - 1;
+    const shippingGstPaise = cgstShares[shippingIdx] + sgstShares[shippingIdx] + igstShares[shippingIdx];
+    const itemGstPaise = lineTaxableAmounts.reduce(
+        (sum, _amount, index) => sum + cgstShares[index] + sgstShares[index] + igstShares[index],
+        0n
+    );
+
+    const shippingGst = fromPaiseBig(shippingGstPaise);
+    const itemTaxAssigned = fromPaiseBig(itemGstPaise);
+    const cgst = fromPaiseBig(cgstHeaderPaise);
+    const sgst = fromPaiseBig(sgstHeaderPaise);
     const paymentStatus = payment ? payment.status : 'Not recorded';
     const buyerSnapshotted = Boolean(order.buyer_name && order.buyer_email);
     const issuedAt = order.invoice_issued_at || order.created_at;
@@ -110,7 +148,7 @@ function buildOrderInvoice({ order, items, shipping, payment }) {
             shipping: shippingAmount,
             taxable_value: taxableValue,
             item_gst: itemTaxAssigned,
-            shipping_gst: money(totalTax - itemTaxAssigned),
+            shipping_gst: shippingGst,
             cgst,
             sgst,
             igst: splitTax ? 0 : totalTax,

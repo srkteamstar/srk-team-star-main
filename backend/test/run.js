@@ -10,9 +10,12 @@ const server = spawn(process.execPath, [path.join(__dirname, 'authz-harness.js')
     stdio: ['ignore', 'pipe', 'inherit']
 });
 
-// Both suites run against the one booted server, in order. A failure in
-// either fails the run — `npm test` is a gate, not a report.
-const SUITES = ['authz.test.js', 'payments.test.js'];
+// All suites run against the one booted server, in order. A failure in any
+// fails the run — `npm test` is a gate, not a report. invoice-rounding.test.js
+// needs neither the server nor the database (buildOrderInvoice() is a pure
+// function) but is listed here too so `npm test` remains the one command that
+// runs everything.
+const SUITES = ['authz.test.js', 'payments.test.js', 'invoice-rounding.test.js'];
 
 function runSuites(index, worstCode) {
     if (index >= SUITES.length) {
