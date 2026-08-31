@@ -4,7 +4,17 @@ const fs = require('fs');
 const paths = require('../../../core/config/paths');
 const { escapeHtmlText: escape } = require('../../../shared/text');
 const { siteOrigin, publicPagePaths, safeImage, sendHtmlPage } = require('../../../core/http/page-metadata');
-const { publicCatalogue } = require('../services/public-catalogue.service');
+const { publicCatalogue, selectMachineryHero } = require('../services/public-catalogue.service');
+
+// The exact string machinery-hero-loader.js's mounted media panel opens
+// with (frontend/pages/index.html) — the anchor this splices the
+// server-rendered first slide after, so it paints on top of (not behind)
+// the pulsing skeleton on the very first frame. Real product photos have no
+// known intrinsic size; 390 is the panel's own largest declared box
+// (lg:max-w-[390px]/max-h-[390px]), so the hint is honest about the space
+// actually reserved rather than a guess at the source file's pixel size.
+const HERO_MEDIA_MARKER = /<div data-machinery-hero-placeholder\b[\s\S]*?<\/div>\s*<\/div>/;
+const HERO_IMG_BOX = 390;
 
 const productPath = product => '/products/' + encodeURIComponent(product.url_slug || String(product.id));
 const descriptionOf = product => String(product.description || product.featured_description || '').trim()
@@ -31,6 +41,38 @@ function failure(req, res, status, title) {
 
 function productPagesController() {
     const router = express.Router();
+    // The landing hero's first slide, server-rendered so it is in the initial
+    // response rather than discovered after JS runs two data fetches
+    // (machinery-hero-loader.js). Splices a real <img> right after the
+    // existing pulsing placeholder — after, not before, so it paints on top
+    // of it on the very first frame instead of behind it — using the exact
+    // selection rule that loader already falls back to (see
+    // selectMachineryHero()). If no hero is available, or the page no longer
+    // contains the anchor this looks for, this changes nothing and hands the
+    // request to the ordinary static render; the client-side loader is
+    // unaffected either way and hydrates around whatever it finds.
+    //
+    // Two literal routes, not one array route: tools/verify-boot.js checks
+    // the served route table against tools/api-surface.json path for path,
+    // and an array route reports as one joined, non-literal entry there.
+    const heroHandler = async (req, res, next) => {
+        try {
+            const hero = await selectMachineryHero();
+            if (!hero) return next();
+
+            const html = fs.readFileSync(paths.INDEX_HTML, 'utf8');
+            const heroImg = `<img src="${escape(hero.image_url)}" alt="${escape(hero.name)}" `
+                + `width="${HERO_IMG_BOX}" height="${HERO_IMG_BOX}" class="absolute inset-0 h-full w-full object-contain" `
+                + `data-ssr-hero data-machinery-hero-image data-machinery-hero-slide data-product-id="${escape(String(hero.id))}" `
+                + `data-active="true" aria-hidden="false" fetchpriority="high" decoding="async" loading="eager">`;
+            const spliced = html.replace(HERO_MEDIA_MARKER, match => match + heroImg);
+            if (spliced === html) return next();
+
+            return sendHtmlPage(req, res, spliced, {});
+        } catch (_) { return next(); }
+    };
+    router.get('/', heroHandler);
+    router.get('/index.html', heroHandler);
     router.get('/products', async (req, res) => {
         try {
             const products = await publicCatalogue();

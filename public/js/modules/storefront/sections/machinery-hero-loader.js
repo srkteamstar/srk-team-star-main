@@ -90,6 +90,23 @@
         const ready = entries.map(entry => !entry.url);
         const requested = entries.map(() => false);
 
+        // HYDRATION. product-pages.controller.js server-renders this exact
+        // markup for entries[0] from the same catalogue projection, so the
+        // hero is visible before this script — or its two data fetches —
+        // ever runs. Reuse that element as slide 0 instead of appending a
+        // second image on top of it; only adopt it when the product it was
+        // rendered for still matches the one this fetch resolved as first,
+        // since the two reads are not the same request and can disagree
+        // (the server-rendered slide is on a short cache, this one is not).
+        // A stale mismatch is simply removed — a fresh slide 0 is appended
+        // for it below, exactly as if no server-rendered slide existed.
+        let ssrHero = stage.querySelector('[data-ssr-hero][data-machinery-hero-image]');
+        if (ssrHero && ssrHero.dataset.productId !== entries[0].productId) {
+            ssrHero.remove();
+            ssrHero = null;
+        }
+        let hydratedFirstSlide = false;
+
         function requestImage(index) {
             const frame = slides[index];
             if (!frame || frame.tagName !== 'IMG' || requested[index]) return;
@@ -118,7 +135,8 @@
         }
 
         entries.forEach((entry, index) => {
-            const frame = entry.url ? document.createElement('img') : fallbackFrame(entry, index);
+            const hydrating = index === 0 && !!ssrHero;
+            const frame = hydrating ? ssrHero : (entry.url ? document.createElement('img') : fallbackFrame(entry, index));
             frame.style.opacity = index === 0 ? '1' : '0';
             frame.style.transition = reduced ? 'none' : 'opacity ' + FADE_MS + 'ms ease-in-out';
             frame.dataset.machineryHeroSlide = '';
@@ -155,11 +173,23 @@
                     if (slideIndex === current) paint(current);
                     settled(index);
                 });
+
+                // requestImage(0) is skipped for this slide below — its src
+                // is already the one this fetch resolved to — and whether
+                // it needs a synthetic load/error (because the real one
+                // fired before the listeners above existed to catch it) is
+                // decided after this loop, once `slides` actually holds it:
+                // the error listener above reindexes through slides.indexOf,
+                // which cannot find this frame until it does.
+                if (hydrating) {
+                    hydratedFirstSlide = true;
+                    requested[0] = true;
+                }
             } else if (index === 0 && placeholder) {
                 placeholder.style.display = 'none';
             }
 
-            stage.appendChild(frame);
+            if (!hydrating) stage.appendChild(frame);
             slides.push(frame);
         });
 
@@ -241,7 +271,17 @@
             stage.appendChild(pauseButton);
         }
         paint(0);
-        requestImage(0);
+        if (hydratedFirstSlide) {
+            // Only now does `slides` hold the hydrated element at index 0,
+            // which is what the error listener's slides.indexOf(frame) (and
+            // the fallback swap it performs) needs to work correctly — done
+            // any earlier, mid-loop, it would find nothing and misfire.
+            if (ssrHero.complete) ssrHero.dispatchEvent(new Event(ssrHero.naturalWidth > 0 ? 'load' : 'error'));
+            // else: still loading — the listeners already attached above
+            // fire naturally when that request finishes.
+        } else {
+            requestImage(0);
+        }
         start();
     }
 
