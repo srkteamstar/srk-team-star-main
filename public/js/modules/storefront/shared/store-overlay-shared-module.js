@@ -299,8 +299,17 @@
     // The failure banner is the shape enquiries.js already uses for a failed
     // fetch, so an error on the storefront and an error in the back office look
     // like the same product reporting the same problem.
+    //
+    // role="alert" + aria-atomic="true" (X01): this element is drawn into
+    // every page that calls it BEFORE any error exists — hidden visually via
+    // the class below, not absent from the DOM — so the live region is
+    // already registered with assistive tech by the time a caller sets its
+    // text and unhides it. A screen-reader user who submits a form with
+    // valid fields but gets an API refusal used to have no way to know
+    // anything happened at all; every caller's own update-in-place (set
+    // textContent, remove `hidden`) now doubles as the announcement.
     function bannerHTML(id) {
-        return '<div id="' + id + '" class="hidden mb-5 p-4 bg-red-50 text-red-700 rounded-sm border border-red-200 text-sm font-semibold"></div>';
+        return '<div id="' + id + '" role="alert" aria-atomic="true" class="hidden mb-5 p-4 bg-red-50 text-red-700 rounded-sm border border-red-200 text-sm font-semibold"></div>';
     }
 
     // ------------------------------------------------------------------
