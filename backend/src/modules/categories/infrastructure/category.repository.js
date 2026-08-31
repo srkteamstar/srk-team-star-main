@@ -2,41 +2,33 @@
  * modules/categories/infrastructure/category.repository.js
  * ============================================================================
  *
- * Reads a category together with its cover image and its LIVE product count.
+ * Reads a category together with its cover image.
  *
- * THE COUNT IS NOT THIS MODULE'S TO COMPUTE. product_count used to be a number
- * an administrator typed into the drawer, and it drifted the moment anybody
- * added a product; migration 006 dropped the column. The number now comes from
- * modules/products through its published read port, which is the doctrine's
- * rule for a synchronous cross-module call: a narrow, side-effect-free query
- * interface, never a sibling's internals.
+ * THIS USED TO ALSO READ A LIVE PRODUCT COUNT, computed by
+ * modules/products through its published read port on every call — including
+ * the public storefront path, which never displayed it. public-categories
+ * .controller.js already narrowed its response to fields the storefront
+ * reads, but the count was still being COMPUTED first (a full scan of
+ * products.category_id) and then discarded, which is real database cost for
+ * a number nothing shows. It is gone from this read entirely now; an admin
+ * surface that wants it again should ask modules/products for it directly,
+ * the same published-interface way this file used to.
  *
  * The view-then-table fallback is unchanged. categories_with_image knows
  * whether the storage object actually exists; the bare table does not, so that
  * branch guesses <id>-cover the way /api/projects does.
  */
 const { supabase } = require('../../../core/database/supabase');
-const { countProductsByCategory } = require('../../products/products.public');
 
 const CATEGORY_BUCKET = 'category-images';
 
 async function fetchCategoryRows() {
-    const [fromView, counts] = await Promise.all([
-        supabase
-            .from('categories_with_image')
-            .select('*')
-            .order('name', { ascending: true }),
-        countProductsByCategory()
-    ]);
+    const fromView = await supabase
+        .from('categories_with_image')
+        .select('*')
+        .order('name', { ascending: true });
 
-    // Set on the way out in both branches, so `product_count` on the response is
-    // always the derived number and never whatever the column happens to hold.
-    const withCount = category => ({
-        ...category,
-        product_count: counts.get(String(category.id)) || 0
-    });
-
-    if (!fromView.error) return (fromView.data || []).map(withCount);
+    if (!fromView.error) return fromView.data || [];
 
     const fromTable = await supabase
         .from('categories')
@@ -45,7 +37,7 @@ async function fetchCategoryRows() {
 
     if (fromTable.error) throw fromTable.error;
 
-    return (fromTable.data || []).map(category => withCount({
+    return (fromTable.data || []).map(category => ({
         ...category,
         image_path: `${category.id}-cover`,
         image_updated_at: category.updated_at

@@ -3,49 +3,25 @@
  * ============================================================================
  *
  * Every read of the products table that more than one place needs, in one
- * file. Two of these are this module's own; two are READ PORTS other modules
- * hold through products.public.js and must never bypass:
+ * file. One of these is this module's own; one is a READ PORT another module
+ * holds through products.public.js and must never bypass:
  *
- *   countProductsByCategory   modules/categories, to derive the Products
- *                             column it stopped storing when 006 dropped it
  *   findActiveProductsByIds   modules/checkout, which prices an order from
  *                             the catalogue and must never take a price from
  *                             a request body
  *
- * countProductsByCategory reads products and lived in the CATEGORIES section
- * of the old server.js purely because that is where its caller was. It belongs
- * here: a module that owns a table owns the queries against it, and the module
- * that needs a number asks for the number.
+ * This used to also publish countProductsByCategory for modules/categories,
+ * which spent a full scan of every product's category_id on every public
+ * categories request to compute a number the storefront never displayed
+ * (public-categories.controller.js explicitly left it off the response). It
+ * was removed rather than fixed to filter, because nothing left in this
+ * repository reads it — see category.repository.js for where it used to be
+ * called from.
  */
 const { supabase } = require('../../../core/database/supabase');
 const { isMissingRelation, isPermissionDenied } = require('../../../core/database/postgrest-errors');
 
 const PRODUCT_BUCKET = 'product-images';
-
-// How many products sit in each category, counted from the products table
-// itself. `product_count` used to be a number the admin typed into the drawer and
-// it drifted the moment anyone added a product; it is derived on every read now,
-// so the column is never trusted (and 006 drops it).
-//
-// One query for the whole list, not one per category. A products table that
-// isn't provisioned yet is not an error — every category simply counts zero.
-async function countProductsByCategory() {
-    const counts = new Map();
-
-    const { data, error } = await supabase.from('products').select('category_id');
-    if (error) {
-        if (isMissingRelation(error) || isPermissionDenied(error)) return counts;
-        throw error;
-    }
-
-    (data || []).forEach(product => {
-        if (product.category_id === null || product.category_id === undefined) return;
-        const key = String(product.category_id);
-        counts.set(key, (counts.get(key) || 0) + 1);
-    });
-
-    return counts;
-}
 
 // Reads categories together with their cover image and their live product count.
 // Preferred path is the categories_with_image view from the migration, which
@@ -185,7 +161,6 @@ async function findProductsForQuoteByIds(ids) {
 
 module.exports = {
     PRODUCT_BUCKET,
-    countProductsByCategory,
     fetchProductRows,
     withProductImages,
     findActiveProductsByIds,

@@ -9,9 +9,10 @@
  *   GET    /api/categories/public       anonymous
  *
  * WHAT IT IMPORTS FROM A SIBLING
- *   modules/products/products.public.js -> countProductsByCategory, and
- *   nothing else. That is the module's ONLY cross-boundary edge, it is a read,
- *   and it goes through the published interface.
+ *   Nothing, any more. This module used to read modules/products'
+ *   countProductsByCategory to decorate every category with a live product
+ *   count that the public path never returned (see category.repository.js).
+ *   That cross-boundary edge is gone along with the unused work it paid for.
  *
  * THE ORIGINAL SECTION HEADER
  *
