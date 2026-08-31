@@ -67,7 +67,12 @@ function paymentsController() {
             });
 
             if (!result.ok) {
-                const status = result.reason === 'gateway_unreachable' ? 503 : 409;
+                // Unreachable gateway and an authorised-but-not-yet-captured
+                // payment are both "wait, do not fail this" — never a 409.
+                // Treating the second as a hard mismatch used to send the
+                // customer down the cancellation path for a payment that was
+                // very likely about to capture normally.
+                const status = ['gateway_unreachable', 'authorized_pending_capture'].includes(result.reason) ? 503 : 409;
                 return res.status(status).json({ error: result.message, reason: result.reason });
             }
 
@@ -76,6 +81,11 @@ function paymentsController() {
             res.status(200).json({
                 paid: true,
                 already: result.already || undefined,
+                // Paid is not always the same as "fulfil this normally" — a
+                // capture that raced a cancellation lands in Payment Review,
+                // and the checkout page must say so rather than reading this
+                // as an ordinary placed order.
+                requires_review: order && order.status === 'Payment Review' || undefined,
                 reference: orderReference(order),
                 order_id: orderId
             });
@@ -264,12 +274,21 @@ function paymentsController() {
             } else if (eventType === 'payment.failed') {
                 if (orderId !== null && paymentEntity) {
                     const row = await gatewayPaymentRow(orderId);
-                    // Never downgrade a Paid row: a failed attempt can legitimately
-                    // arrive after a successful retry on the same order.
-                    if (row && row.status !== PAYMENT_STATUS.paid) {
-                        await supabase.from('payments')
+                    // Guarded atomically in the WHERE clause, not by checking
+                    // row.status in JavaScript first and updating after: that
+                    // gap is exactly what let an overlapping successful
+                    // verification be overwritten back to Failed (and, before
+                    // this fix, could just as easily clobber a Refunded row
+                    // with a delayed failure event for the same payment). A
+                    // failed attempt may only ever land on a row still
+                    // 'Created' — anything Paid, Refunded, Partially Refunded
+                    // or already Failed is left exactly as it is.
+                    if (row) {
+                        const { error } = await supabase.from('payments')
                             .update({ status: PAYMENT_STATUS.failed, transaction_id: paymentEntity.id })
-                            .eq('id', row.id);
+                            .eq('id', row.id)
+                            .eq('status', PAYMENT_STATUS.created);
+                        if (error) throw error;
                     }
                 }
                 await finish(null);
@@ -278,13 +297,21 @@ function paymentsController() {
                 // refund path in this codebase and there must not be one — a refund
                 // is an action taken in the Razorpay dashboard, and this event is
                 // how the ledger learns it happened.
+                //
+                // Applied through apply_store_refund() (migration 034), which adds
+                // THIS event's amount to a running refunded_amount_paise and derives
+                // Refunded/Partially Refunded from the cumulative total — not from
+                // comparing one event's amount against the full payment, which is
+                // what previously left two partial refunds that together covered
+                // the whole payment sitting at 'Partially Refunded' forever.
                 if (orderId !== null && refundEntity) {
                     const row = await gatewayPaymentRow(orderId);
                     if (row) {
-                        const full = Number(refundEntity.amount) >= Number(row.amount_paise);
-                        await supabase.from('payments')
-                            .update({ status: full ? 'Refunded' : 'Partially Refunded' })
-                            .eq('id', row.id);
+                        const refunded = await supabase.rpc('apply_store_refund', {
+                            p_payment_id: row.id,
+                            p_refund_amount_paise: Number(refundEntity.amount) || 0
+                        });
+                        if (refunded.error) throw refunded.error;
                     }
                 }
                 await finish(null);

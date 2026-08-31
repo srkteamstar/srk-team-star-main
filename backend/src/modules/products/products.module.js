@@ -22,6 +22,7 @@
  */
 const express = require('express');
 const { publicProductsController } = require('./controllers/public-products.controller');
+const { productPagesController } = require('./controllers/product-pages.controller');
 
 /** @returns {import('express').Router} */
 function productsModule() {
@@ -30,4 +31,6 @@ function productsModule() {
     return router;
 }
 
-module.exports = { productsModule };
+function productPagesModule() { return productPagesController(); }
+
+module.exports = { productsModule, productPagesModule };

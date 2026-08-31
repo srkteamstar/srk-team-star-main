@@ -1,0 +1,206 @@
+{
+  "/assets/hero-image.png": {
+    "originalBytes": 2409182,
+    "originalSha256": "c1b97e446dd2e8a3bf9948c59ca3711bd66cd334aeab1ec409df846bc6c2117e",
+    "width": 1672,
+    "height": 941,
+    "variants": [
+      {
+        "url": "/assets/optimized/hero-image-480.3d0035f7c3fd3d12.webp",
+        "width": 480,
+        "height": 270,
+        "bytes": 7628,
+        "sha256": "3d0035f7c3fd3d12a458655d9fc049fdaac71df01917344c25ef131b6faca6da"
+      },
+      {
+        "url": "/assets/optimized/hero-image-800.aa7db5bd4cd9ad6e.webp",
+        "width": 800,
+        "height": 450,
+        "bytes": 18440,
+        "sha256": "aa7db5bd4cd9ad6e3a46fe15841952b2dceadb456f5201accdde383a0f6ca649"
+      },
+      {
+        "url": "/assets/optimized/hero-image-1280.f03c09ff6d6912fb.webp",
+        "width": 1280,
+        "height": 720,
+        "bytes": 67924,
+        "sha256": "f03c09ff6d6912fbc7415bc0c2212006ec59be56586e88695de3b89a31d3960a"
+      },
+      {
+        "url": "/assets/optimized/hero-image-1600.15ff75c24176cb42.webp",
+        "width": 1600,
+        "height": 900,
+        "bytes": 119418,
+        "sha256": "15ff75c24176cb428a075c7ef0ec4dec28f9dfd208ff33cc46fc969070e7590e"
+      }
+    ]
+  },
+  "/assets/machine-card-desktop.png": {
+    "originalBytes": 237064,
+    "originalSha256": "93144c1231c23f28f89a4c480c1a6a9441f58471b53b11bdd8d6b8334ad2e781",
+    "width": 415,
+    "height": 453,
+    "variants": [
+      {
+        "url": "/assets/optimized/machine-card-desktop-320.e82f47540ddf80a1.webp",
+        "width": 320,
+        "height": 349,
+        "bytes": 10930,
+        "sha256": "e82f47540ddf80a1417826eaed513960ee6699ef41e35847170c2226354172a2"
+      },
+      {
+        "url": "/assets/optimized/machine-card-desktop-415.3eec9a93e7080de2.webp",
+        "width": 415,
+        "height": 453,
+        "bytes": 14860,
+        "sha256": "3eec9a93e7080de2aef84f9216a8635697cde28c9539fa27950e7ca89954083c"
+      }
+    ]
+  },
+  "/assets/frame-molding-desktop.png": {
+    "originalBytes": 1289480,
+    "originalSha256": "77e2dabf32355219feae0c184c1c81af96ee28cd51592844f9428bc16d22380b",
+    "width": 1440,
+    "height": 803,
+    "variants": [
+      {
+        "url": "/assets/optimized/frame-molding-desktop-480.0ae9cce640d0b270.webp",
+        "width": 480,
+        "height": 268,
+        "bytes": 4228,
+        "sha256": "0ae9cce640d0b2707f5ddef83a9185380fa8fbff7b6e586e030b030451848e2b"
+      },
+      {
+        "url": "/assets/optimized/frame-molding-desktop-800.4cef08eda48649e9.webp",
+        "width": 800,
+        "height": 446,
+        "bytes": 9368,
+        "sha256": "4cef08eda48649e97e0fbc146d99d950b03168da041d54ba7023fda7730b5d83"
+      },
+      {
+        "url": "/assets/optimized/frame-molding-desktop-1280.ace2d5ab23916cc2.webp",
+        "width": 1280,
+        "height": 714,
+        "bytes": 18890,
+        "sha256": "ace2d5ab23916cc2f4b9468fa5ab6217adce0fe0d8aaf07c3f4ac207cecadbfc"
+      }
+    ]
+  },
+  "/assets/hardware-card-desktop.png": {
+    "originalBytes": 305240,
+    "originalSha256": "16a6ed765e3b032a1500e8dd8eecea5a53af325d4431714c03a2af85bcfeb41e",
+    "width": 415,
+    "height": 491,
+    "variants": [
+      {
+        "url": "/assets/optimized/hardware-card-desktop-320.5b5049da7cc59860.webp",
+        "width": 320,
+        "height": 379,
+        "bytes": 11390,
+        "sha256": "5b5049da7cc598609aed682d2a8dd80d91bf420f0eb4d0c623b63e83d409b4d3"
+      },
+      {
+        "url": "/assets/optimized/hardware-card-desktop-415.4c53713b9c076875.webp",
+        "width": 415,
+        "height": 491,
+        "bytes": 15540,
+        "sha256": "4c53713b9c076875e7c53256e1a5878b016b2a96266f4982c7b22943f72702c2"
+      }
+    ]
+  },
+  "/assets/hardware-hero-desktop.png": {
+    "originalBytes": 1234313,
+    "originalSha256": "b41d4f0378ec576d08dc37a37f0a8ad94cd3465074ea9f9acf81fe1a436cc12a",
+    "width": 1440,
+    "height": 803,
+    "variants": [
+      {
+        "url": "/assets/optimized/hardware-hero-desktop-480.5d53e5aa6e59726f.webp",
+        "width": 480,
+        "height": 268,
+        "bytes": 4516,
+        "sha256": "5d53e5aa6e59726fa5ef49bb49f99d6f8aaa290f2fcf51054b54b98617865211"
+      },
+      {
+        "url": "/assets/optimized/hardware-hero-desktop-800.2c5e9c6cd49a08b4.webp",
+        "width": 800,
+        "height": 446,
+        "bytes": 8996,
+        "sha256": "2c5e9c6cd49a08b4778e7bffd92ac83396e306343445c7e3cbf81f199e8c5c93"
+      },
+      {
+        "url": "/assets/optimized/hardware-hero-desktop-1280.46d25fabdc19a3c1.webp",
+        "width": 1280,
+        "height": 714,
+        "bytes": 17144,
+        "sha256": "46d25fabdc19a3c15970f9062f9c4ccd3abdd5ad8ba49a9327eb7a9d7bfc6f0b"
+      }
+    ]
+  },
+  "/assets/frame-molding-card-desktop.png": {
+    "originalBytes": 326415,
+    "originalSha256": "ea4d8bd79c251714610fd34748df7e523b4e663924c9ca9321e1131cdea30d28",
+    "width": 415,
+    "height": 491,
+    "variants": [
+      {
+        "url": "/assets/optimized/frame-molding-card-desktop-320.15260e44be8676d0.webp",
+        "width": 320,
+        "height": 379,
+        "bytes": 13530,
+        "sha256": "15260e44be8676d0e08b9d808a3f196e97a5cd70ccd48b60619476c4001f475f"
+      },
+      {
+        "url": "/assets/optimized/frame-molding-card-desktop-415.3163a778c5362385.webp",
+        "width": 415,
+        "height": 491,
+        "bytes": 19176,
+        "sha256": "3163a778c5362385683e06f292d747d3bac81d11799446134315fc4c65858126"
+      }
+    ]
+  },
+  "/assets/icons/SRK-Team-Star-Logos/primary-bgless.png": {
+    "originalBytes": 322983,
+    "originalSha256": "5ac4cceb29c966e2a988d6daf5601004cd37101edb7af31f6f1946c64c4f2fd4",
+    "width": 1080,
+    "height": 1080,
+    "variants": [
+      {
+        "url": "/assets/optimized/primary-bgless-160.54bf530b1dd38413.webp",
+        "width": 160,
+        "height": 160,
+        "bytes": 6192,
+        "sha256": "54bf530b1dd3841343690108736b923a92ab6396e302bd1f981c2e6e41ee5e7f"
+      },
+      {
+        "url": "/assets/optimized/primary-bgless-320.0d9392a4b9d8a28b.webp",
+        "width": 320,
+        "height": 320,
+        "bytes": 14394,
+        "sha256": "0d9392a4b9d8a28b877fcce0906f6a11b88ababf83ad2a37ff71947349ff5325"
+      },
+      {
+        "url": "/assets/optimized/primary-bgless-480.dc73fc59557bc063.webp",
+        "width": 480,
+        "height": 480,
+        "bytes": 21292,
+        "sha256": "dc73fc59557bc063cd55905d50bff575b1db8fab88db7c6cc94c553a9963d67f"
+      }
+    ]
+  },
+  "/assets/icons/SRK-Team-Star-Logos/primary.png": {
+    "originalBytes": 54120,
+    "originalSha256": "061a43e133eb0f3fc0886ba2a0d998833561676de6b742fed4d8446571efdb02",
+    "width": 200,
+    "height": 200,
+    "variants": [
+      {
+        "url": "/assets/optimized/primary-48.b27b377472eb54e7.png",
+        "width": 48,
+        "height": 48,
+        "bytes": 2977,
+        "sha256": "b27b377472eb54e73ffb4c52e572fea40a083564929861d8217c203e1bc0ed26"
+      }
+    ]
+  }
+}

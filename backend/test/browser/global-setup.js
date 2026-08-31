@@ -3,7 +3,7 @@ const path = require('path');
 
 module.exports = async function globalSetup() {
     const server = spawn(process.execPath, [path.join(__dirname, '..', 'authz-harness.js')], {
-        env: Object.assign({}, process.env, { HARNESS_PORT: '3457' }),
+        env: Object.assign({}, process.env, { HARNESS_PORT: '3457', SITE_ORIGIN: 'https://storefront.example.test' }),
         stdio: ['ignore', 'pipe', 'pipe']
     });
 

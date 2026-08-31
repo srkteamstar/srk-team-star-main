@@ -175,7 +175,7 @@ test('Landing hero keeps every Machinery product in the mobile gallery flow', as
     const galleryBox = await gallery.boundingBox();
     expect(actionBox && galleryBox && galleryBox.y + galleryBox.height < actionBox.y).toBeTruthy();
 
-    const sources = await images.evaluateAll(nodes => nodes.map(node => node.src));
+    const sources = await images.evaluateAll(nodes => nodes.map(node => node.getAttribute('src') || node.dataset.src));
     expect(sources.some(source => source.includes('ff0000'))).toBeFalsy();
     expect(sources.some(source => source.includes('00ff00'))).toBeFalsy();
     expect(sources.some(source => source.includes('0000ff'))).toBeTruthy();
@@ -396,7 +396,7 @@ test('A successful payment closes only its tab and confirms the order on checkou
 
 test('Store product details are reachable with Enter and Space', async ({ page }) => {
     await page.goto('/store/store.html', { waitUntil: 'domcontentloaded' });
-    const card = page.locator('article[data-product-id][role="button"][tabindex="0"]').first();
+    const card = page.locator('article[data-product-id] a[data-product-link]').first();
     await expect(card).toBeVisible();
 
     await card.focus();

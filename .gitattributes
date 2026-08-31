@@ -6,3 +6,6 @@
 *.avif binary
 *.woff2 binary
 *.ico binary
+# Generated URLs hash exact bytes; never convert their line endings on checkout.
+public/assets/versioned/** -text
+tools/*-manifest.json text eol=lf

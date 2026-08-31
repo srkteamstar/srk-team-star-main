@@ -44,9 +44,39 @@ const { CURRENCY, PAYMENT_STATUS } = require('../../../shared/contracts/payment'
 const { ORDER_STATUS_AWAITING_PAYMENT } = require('../../../shared/contracts/order-status');
 const { orderReference } = require('../../../shared/contracts/order-reference');
 const { gatewayPaymentRow } = require('../../payments/payments.public');
-const { orderCancelLimiter } = require('../infrastructure/order-rate-limit');
+const { orderCancelLimiter, orderStatusLimiter } = require('../infrastructure/order-rate-limit');
 const { buildOrderInvoice } = require('../services/order-invoice.service');
 const { accessibleOrder } = require('../services/order-access.service');
+
+// THE HANDSHAKE-AND-CAN-CANCEL RULE, IN ONE PLACE.
+//
+// Shared between /api/orders/mine (one customer's whole history) and
+// GET /api/orders/:id/status (one order, session OR guest token) so the two
+// routes cannot drift into publishing a Pay-now handshake under different
+// conditions. See the long comment this used to carry inline in
+// /api/orders/mine for why each of the four handshake conditions exists.
+function orderStatusView(order, payment) {
+    return {
+        payment: (
+            PAYMENTS_ENABLED &&
+            order.status === ORDER_STATUS_AWAITING_PAYMENT &&
+            payment &&
+            payment.gateway === 'razorpay' &&
+            payment.status !== PAYMENT_STATUS.paid &&
+            payment.gateway_order_id
+        ) ? {
+            key_id: razorpay.publicKeyId(),
+            gateway_order_id: payment.gateway_order_id,
+            amount_paise: payment.amount_paise,
+            currency: payment.currency || CURRENCY
+        } : undefined,
+
+        can_cancel: Boolean(
+            order.status === ORDER_STATUS_AWAITING_PAYMENT &&
+            (!payment || payment.status !== PAYMENT_STATUS.paid)
+        )
+    };
+}
 
 /** @returns {import('express').Router} */
 function customerOrdersController() {
@@ -160,57 +190,10 @@ function customerOrdersController() {
                     // shape for a test as well as for a page.
                     payment_method: payment ? (payment.payment_method || null) : null,
 
-                    // THE HANDSHAKE FOR AN ORDER THAT WAS NEVER PAID FOR.
-                    //
-                    // Present only on an order still awaiting money through the
-                    // gateway, and it is what makes such an order *resumable* —
-                    // my-orders-module.js hands this straight to
-                    // window.storePayment.pay(), which reopens THE SAME Razorpay
-                    // order rather than creating a second one.
-                    //
-                    // Without it an abandoned payment was a dead end. The
-                    // handshake lived only in checkout-module.js's memory, so a
-                    // reload lost it; the cart was (correctly) never cleared, so
-                    // the page repainted the form and the customer placed a
-                    // DUPLICATE order for the same basket. Every abandoned attempt
-                    // left a permanent 'Pending Payment' row holding a real
-                    // order_number that nothing could ever settle or clear.
-                    //
-                    // NOTHING HERE IS NEW INFORMATION. `key_id` is public by
-                    // design (it is handed to every browser that opens the modal)
-                    // and `gateway_order_id` was already sent to this same
-                    // customer, in this same browser, by POST /api/checkout. The
-                    // route is behind requireCustomer and filtered on
-                    // req.profile.id, so it is their own order.
-                    //
-                    // The four conditions are all required: an order the gateway
-                    // never backed, one already paid, or one placed while payments
-                    // were switched off must not offer a Pay-now button that
-                    // cannot work.
-                    payment: (
-                        PAYMENTS_ENABLED &&
-                        order.status === ORDER_STATUS_AWAITING_PAYMENT &&
-                        payment &&
-                        payment.gateway === 'razorpay' &&
-                        payment.status !== PAYMENT_STATUS.paid &&
-                        payment.gateway_order_id
-                    ) ? {
-                        key_id: razorpay.publicKeyId(),
-                        gateway_order_id: payment.gateway_order_id,
-                        amount_paise: payment.amount_paise,
-                        currency: payment.currency || CURRENCY
-                    } : undefined,
-
-                    // Can the customer close this out themselves? Computed here
-                    // rather than inferred in the browser from the status string,
-                    // for the same reason payment-module.js's `settling` is a flag
-                    // and not a phrase: the page should not be re-deriving a rule
-                    // the server already applied, and POST /api/orders/:id/cancel
-                    // enforces exactly this condition anyway.
-                    can_cancel: Boolean(
-                        order.status === ORDER_STATUS_AWAITING_PAYMENT &&
-                        (!payment || payment.status !== PAYMENT_STATUS.paid)
-                    ),
+                    // THE HANDSHAKE AND CANCEL RULE, from orderStatusView() above —
+                    // shared with GET /api/orders/:id/status so the two routes
+                    // cannot drift on when a Pay-now button is safe to offer.
+                    ...orderStatusView(order, payment),
 
                     tracking: order.tracking || '',
                     shipping_address: shipping
@@ -233,6 +216,46 @@ function customerOrdersController() {
         } catch (error) {
             console.error("Fetch My Orders Error:", error);
             res.status(500).json({ error: "Failed to fetch your orders." });
+        }
+    });
+
+    // ---- One order, for a checkout tab to poll -----------------------------
+    //
+    // The whole reason this exists: a webhook settles an order on the server
+    // while the browser that placed it is still sitting on the checkout page,
+    // and nothing before this route ever told that page to ask again. It is
+    // deliberately the smallest possible read — not the invoice, not the full
+    // history — because a page polling every few seconds should not be
+    // transferring a full invoice on each tick.
+    //
+    // Same access rule as the invoice route below: a signed-in customer's own
+    // order, or a guest's one-order access token. No new authorization
+    // surface — accessibleOrder() is the same boundary /api/orders/:id/invoice
+    // already uses.
+    router.get('/api/orders/:id/status', orderStatusLimiter, async (req, res) => {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+
+        const orderId = optionalId(req.params.id);
+        if (orderId === null) return res.status(404).json({ error: 'No such order.' });
+
+        try {
+            const access = await accessibleOrder(req, orderId);
+            if (!access.order) return res.status(access.status).json({ error: access.error });
+            const order = access.order;
+
+            const payment = await gatewayPaymentRow(order.id);
+
+            res.status(200).json({
+                order_id: order.id,
+                reference: orderReference(order),
+                status: order.status || 'Processing',
+                payment_status: payment ? payment.status : null,
+                requires_review: order.status === 'Payment Review',
+                ...orderStatusView(order, payment)
+            });
+        } catch (error) {
+            console.error('Fetch Order Status Error:', error);
+            res.status(500).json({ error: 'Could not check that order.' });
         }
     });
 

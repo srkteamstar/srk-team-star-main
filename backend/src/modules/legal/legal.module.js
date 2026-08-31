@@ -40,6 +40,7 @@ const express = require('express');
 const fs = require('fs');
 const paths = require('../../core/config/paths');
 const { escapeHtmlText } = require('../../shared/text');
+const { sendHtmlPage } = require('../../core/http/page-metadata');
 
 const LEGAL_SHELL = paths.LEGAL_SHELL_HTML;
 
@@ -95,7 +96,7 @@ function legalModule() {
         // may serve a stale policy page out of its in-memory cache.
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         res.setHeader('Cache-Control', 'no-cache');
-        res.send(html);
+        sendHtmlPage(req, res, html);
     });
 
     return router;

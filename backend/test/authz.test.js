@@ -211,6 +211,61 @@ async function req(cookies, method, path, body, extraHeaders) {
     check('guest checkout rejects an oversized delivery address before pricing or writing',
         r.status === 400, JSON.stringify(r));
 
+    console.log('\n=== 4B. GET /api/orders/:id/status — SAME BOUNDARY AS THE INVOICE ROUTE ===');
+    // The route a checkout tab polls to learn a webhook-settled order without
+    // ever needing full order history. Same accessibleOrder() boundary as
+    // the invoice route above, so the same three cases apply.
+    r = await req(jar(), 'GET', `/api/orders/${guestOrderId}/status`);
+    check('a guest order status is private without its token', r.status === 401, JSON.stringify(r));
+    r = await req(jar(), 'GET', `/api/orders/${guestOrderId}/status`, undefined,
+        { 'X-Order-Access-Token': 'x'.repeat(43) });
+    check('a wrong guest token does not reveal whether the order exists', r.status === 404, JSON.stringify(r));
+    r = await req(jar(), 'GET', `/api/orders/${guestOrderId}/status`, undefined,
+        { 'X-Order-Access-Token': guestOrderToken });
+    check('the checkout token reads that guest order\'s status',
+        r.status === 200 && r.body.order_id === guestOrderId && typeof r.body.status === 'string' && r.body.requires_review === false,
+        JSON.stringify(r.body).slice(0, 200));
+
+    r = await req(custA, 'GET', '/api/orders/900/status');
+    check('a customer reads their own order status', r.status === 200 && r.body.order_id === 900, JSON.stringify(r.body));
+    r = await req(custB, 'GET', '/api/orders/900/status');
+    check('...but not another customer\'s', r.status === 404, JSON.stringify(r));
+
+    console.log('\n=== 4C. A LOST CHECKOUT RESPONSE, THEN A RETRY, IS ONE ORDER ===');
+    // Same idempotency key on two otherwise-identical requests must return
+    // the SAME order rather than writing a second one for the same basket.
+    const retryKey = `idem-test-${Date.now()}`;
+    const retryGuest = jar();
+    const firstAttempt = await req(retryGuest, 'POST', '/api/checkout', {
+        items: [{ product_id: 1, quantity: 1 }],
+        contact: { name: 'Retry Guest', email: 'retry-guest@example.test', phone: '9333333333' },
+        address: { address_line: 'Retry Road', city: 'Gohana', state: 'Haryana', postal_code: '131301' },
+        payment_mode: 'offline', idempotency_key: retryKey
+    });
+    check('the first attempt places an order normally',
+        firstAttempt.status === 201 && firstAttempt.body.order_id, JSON.stringify(firstAttempt.body).slice(0, 160));
+
+    const secondAttempt = await req(retryGuest, 'POST', '/api/checkout', {
+        items: [{ product_id: 1, quantity: 1 }],
+        contact: { name: 'Retry Guest', email: 'retry-guest@example.test', phone: '9333333333' },
+        address: { address_line: 'Retry Road', city: 'Gohana', state: 'Haryana', postal_code: '131301' },
+        payment_mode: 'offline', idempotency_key: retryKey
+    });
+    check('a retry with the same idempotency key returns the SAME order, not a new one',
+        secondAttempt.status === 200 && secondAttempt.body.order_id === firstAttempt.body.order_id,
+        `first=${firstAttempt.body.order_id} second=${JSON.stringify(secondAttempt.body).slice(0, 160)}`);
+
+    // The retry mints a FRESH guest token rather than replaying the first
+    // one — the plaintext token is never stored, so if the first response
+    // had genuinely been lost this is the only way back to the order at all.
+    check('...and the retry response still carries a working guest token',
+        /^[A-Za-z0-9_-]{40,100}$/.test(secondAttempt.body.order_access_token || ''),
+        JSON.stringify(secondAttempt.body).slice(0, 160));
+    r = await req(jar(), 'GET', `/api/orders/${firstAttempt.body.order_id}/status`, undefined,
+        { 'X-Order-Access-Token': secondAttempt.body.order_access_token });
+    check('...and that fresh token actually opens the order',
+        r.status === 200 && r.body.order_id === firstAttempt.body.order_id, JSON.stringify(r.body));
+
     console.log('\n=== 5. EXISTING CONTACT DETAILS STILL REMAIN A GUEST ORDER ===');
     const guest2 = jar();
     r = await req(guest2, 'POST', '/api/checkout', {

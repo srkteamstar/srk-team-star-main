@@ -52,7 +52,7 @@ const { enquiriesModule } = require('./modules/enquiries/enquiries.module');
 const { quotesModule } = require('./modules/quotes/quotes.module');
 const { projectsModule } = require('./modules/projects/projects.module');
 const { categoriesModule } = require('./modules/categories/categories.module');
-const { productsModule } = require('./modules/products/products.module');
+const { productsModule, productPagesModule } = require('./modules/products/products.module');
 const { ordersModule } = require('./modules/orders/orders.module');
 const { authModule } = require('./modules/auth/auth.module');
 const { cartModule } = require('./modules/cart/cart.module');
@@ -85,6 +85,8 @@ function createApp() {
 
     // Six URLs, one template, no files. Must precede the static mounts.
     app.use(legalModule());
+    // Read-only public discovery pages must precede static store bookmarks.
+    app.use(productPagesModule());
 
     // The frontend. Everything below this line is API.
     mountStaticFiles(app);

@@ -212,7 +212,12 @@ async function sendWebhook(eventId, event, entity, options) {
     check('a captured payment for the wrong amount is refused',
         r.status === 409 && r.body.reason === 'mismatch', JSON.stringify(r.body));
 
-    // (d) Authorised but never captured. Money has not moved.
+    // (d) Authorised but never captured. Money has not moved, and a capture
+    // is very likely still coming — this must wait, not fail. It used to be
+    // folded into the generic mismatch branch (409, Failed), which routed an
+    // in-flight payment straight to cancellation eligibility. It is now its
+    // own reason, answered the same way an unreachable gateway is: 503,
+    // retry-shaped, and the payment row is left untouched at 'Created'.
     const orderC = await placeOrder(accountB, 3);
     const pending = `pay_authorized_${orderC.body.payment.amount_paise}_${orderC.body.payment.gateway_order_id}`;
     r = await req(buyer, 'POST', '/api/payments/verify', {
@@ -221,8 +226,13 @@ async function sendWebhook(eventId, event, entity, options) {
         razorpay_payment_id: pending,
         razorpay_signature: checkoutSignature(orderC.body.payment.gateway_order_id, pending)
     });
-    check('an authorised-but-uncaptured payment is refused',
-        r.status === 409 && r.body.reason === 'mismatch', JSON.stringify(r.body));
+    check('an authorised-but-uncaptured payment waits rather than fails',
+        r.status === 503 && r.body.reason === 'authorized_pending_capture', JSON.stringify(r.body));
+
+    const stillPending = (await req(accountB, 'GET', '/api/orders/mine')).body.find(order => order.id === orderC.body.order_id);
+    check('...and is left exactly as it was: unpaid, uncancelled, still payable',
+        stillPending && stillPending.status === 'Pending Payment' && stillPending.payment_status === 'Created' && stillPending.can_cancel === true,
+        JSON.stringify(stillPending));
 
     console.log('\n=== 3. A REAL PAYMENT IS ACCEPTED, ONCE ===');
 

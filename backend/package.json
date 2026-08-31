@@ -13,7 +13,7 @@
     "multer": "^2.2.0"
   },
   "scripts": {
-    "test": "node test/run.js",
+    "test": "node test/run.js && node --test test/seo.test.js",
     "test:browser": "playwright test",
     "reconcile": "node scripts/reconcile.js",
     "start": "node server.js",
@@ -21,7 +21,7 @@
     "reconcile:scheduled": "node scripts/reconcile-scheduled.js",
     "reconcile:schedule-install": "powershell -ExecutionPolicy Bypass -File scripts/schedule-reconcile.ps1",
     "set-customer-password": "node scripts/set-customer-password.js",
-    "build:css": "tailwindcss -c tailwind.config.js -i styles/tailwind.input.css -o ../public/assets/vendor/tailwind.build.css --minify",
+    "build:css": "tailwindcss -c tailwind.config.js -i styles/tailwind.input.css -o ../public/assets/vendor/tailwind.build.css --minify && node ../tools/build-web-assets.js",
     "watch:css": "tailwindcss -c tailwind.config.js -i styles/tailwind.input.css -o ../public/assets/vendor/tailwind.build.css --watch",
     "test:all": "npm run verify && npm test && npm run test:browser",
     "verify": "node ../tools/verify.js",

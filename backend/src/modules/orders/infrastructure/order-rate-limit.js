@@ -14,4 +14,16 @@ const orderCancelLimiter = storefrontRateLimit('order-cancel', {
     message: { error: "Too many attempts. Try again in a few minutes." }
 });
 
-module.exports = { orderCancelLimiter };
+// A checkout tab polls this every few seconds while an order is unpaid — a
+// customer taking the full five-minute bounded wait (checkout-module.js) at
+// the fastest cadence is still well under 150 requests. Generous on purpose:
+// the client-side poller is already bounded (backoff, one in-flight request,
+// a hard stop after five minutes), so this limiter exists for abuse, not for
+// the ordinary case.
+const orderStatusLimiter = storefrontRateLimit('order-status', {
+    windowMs: 15 * 60 * 1000,
+    max: 240,
+    message: { error: "Too many status checks. Try again in a few minutes." }
+});
+
+module.exports = { orderCancelLimiter, orderStatusLimiter };

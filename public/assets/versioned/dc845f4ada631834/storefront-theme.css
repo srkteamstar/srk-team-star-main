@@ -1,0 +1,359 @@
+/*
+ * SRK storefront / dashboard visual alignment.
+ * Reference: admin-dashboard-srk's shell and adminDashboardUI hero/stat/action.
+ * This optional, screen-only layer changes presentation, never application state.
+ * Keep positioning, visibility, scroll ownership and transition-driven lifecycles
+ * in their existing modules. Printed quotations and invoices retain their styles.
+ */
+@media screen {
+    :root {
+        --srk-ink: #12170f;
+        --srk-copy: #1f271b;
+        --srk-muted: #63695f;
+        --srk-gold: #d4af37;
+        --srk-gold-light: #e4c55c;
+        --srk-gold-ink: #80621a;
+        --srk-wine: #420c14;
+        --srk-canvas: #f6f7f4;
+        --srk-surface: #ffffff;
+        --srk-soft: #eef0e9;
+        --srk-border: rgba(18, 23, 15, .1);
+        --srk-radius-control: .625rem;
+        --srk-radius-card: .875rem;
+        --srk-radius-feature: 1rem;
+        --srk-shadow-card: 0 8px 30px rgba(18, 23, 15, .04);
+        --srk-shadow-raised: 0 14px 36px rgba(18, 23, 15, .09);
+        --srk-shadow-feature: 0 22px 55px rgba(18, 23, 15, .16);
+    }
+
+    body[data-srk-page] {
+        background-color: var(--srk-canvas);
+        color: var(--srk-copy);
+        font-family: "Manrope", sans-serif;
+        -webkit-font-smoothing: antialiased;
+    }
+
+    body[data-srk-page] :is(h1, h2, h3, h4, h5, h6) {
+        font-family: "Schibsted Grotesk", sans-serif;
+        letter-spacing: -.025em;
+    }
+
+    body[data-srk-page] :is(button, a, input, select, textarea):focus-visible {
+        outline: 2px solid var(--srk-gold-ink);
+        outline-offset: 3px;
+    }
+
+    body[data-srk-page] :is(button, a).rounded-sm,
+    body[data-srk-page] :is(button, a).rounded,
+    body[data-srk-page] :is(input:not([type="checkbox"]):not([type="radio"]), textarea, select),
+    body[data-srk-page] .srk-select__trigger {
+        border-radius: var(--srk-radius-control);
+    }
+
+    /* Surface colours are exact class tokens, not substring matches: do not
+       recolour hover, disabled, validation, selection or payment status classes. */
+    body[data-srk-page] :is([class~="bg-[#f8fafc]"], [class~="bg-[#f1f5f9]"]) {
+        background-color: var(--srk-canvas);
+    }
+
+    body[data-srk-page] :is(a, p, span, label)[class~="text-[#d4af37]"] {
+        color: var(--srk-gold-ink);
+    }
+
+    body[data-srk-page] :is(a, button)[class~="bg-[#d4af37]"],
+    body[data-srk-page] [data-hero-cta] {
+        border-radius: var(--srk-radius-control);
+        background-color: var(--srk-gold);
+        color: var(--srk-ink);
+        font-weight: 700;
+        box-shadow: 0 8px 22px rgba(212, 175, 55, .16);
+    }
+
+    body[data-srk-page] :is(a, button)[class~="bg-[#d4af37]"] :is(span, svg),
+    body[data-srk-page] [data-hero-cta] svg {
+        color: var(--srk-ink);
+    }
+
+    body[data-srk-page] a[class~="bg-[#d4af37]"]:hover,
+    body[data-srk-page] button[class~="bg-[#d4af37]"]:enabled:hover,
+    body[data-srk-page] [data-hero-cta]:hover {
+        background-color: var(--srk-gold-light);
+        color: var(--srk-ink);
+    }
+
+    body[data-srk-page] :is(a, button)[class~="bg-[#420c1f]"],
+    body[data-srk-page] :is(a, button)[class~="bg-[#420c14]"] {
+        background-color: var(--srk-wine);
+        color: #fff;
+        border-radius: var(--srk-radius-control);
+    }
+
+    body[data-srk-page] .srk-secondary-btn { border-radius: var(--srk-radius-control); }
+
+    /* Public navigation retains its existing transparent / solid states. */
+    body[data-srk-page] > header:not(.bg-transparent) {
+        border-color: var(--srk-border);
+        box-shadow: 0 4px 22px rgba(18, 23, 15, .035);
+    }
+
+    body[data-srk-page] > header nav a:not(.quote-nav-cta):hover {
+        color: var(--srk-gold-ink);
+    }
+
+    body[data-srk-page] > header.bg-transparent nav a:hover { color: var(--srk-gold-light); }
+    body[data-srk-page] > header.bg-transparent .quote-nav-cta { background-color: transparent; }
+
+    body[data-srk-page] .srk-mobile-panel {
+        background: var(--srk-surface);
+        box-shadow: var(--srk-shadow-feature);
+    }
+
+    body[data-srk-page] .srk-mobile-panel a { border-radius: var(--srk-radius-control); }
+
+    /* The store uses the same quiet canvas, white rail and active gold keyline
+       as the admin console. Its mobile navigation still owns its geometry. */
+    body[data-srk-page="store"] > div > header {
+        box-shadow: 10px 0 32px rgba(18, 23, 15, .035);
+    }
+
+    body[data-srk-page="store"] main > section,
+    body[data-srk-page="store"] #store-content {
+        background: transparent;
+    }
+
+    body[data-srk-page="store"] main {
+        background: radial-gradient(circle at 88% 0, rgba(212, 175, 55, .055), transparent 28%), var(--srk-canvas);
+    }
+
+    body[data-srk-page="store"] .nav-btn {
+        min-height: 44px;
+        border: 1px solid transparent;
+        border-radius: var(--srk-radius-control);
+        font-weight: 600;
+    }
+
+    body[data-srk-page="store"] .nav-btn[class~="bg-[#d4af37]/10"],
+    body[data-srk-page="store"] .nav-btn[class~="bg-[#d4af37]/5"] {
+        background: rgba(212, 175, 55, .1);
+        color: var(--srk-gold-ink);
+        border-color: rgba(212, 175, 55, .18);
+        box-shadow: inset 3px 0 0 var(--srk-gold);
+    }
+
+    body[data-srk-page="store"] .nav-btn:hover {
+        background-color: rgba(212, 175, 55, .06);
+        color: var(--srk-gold-ink);
+    }
+
+    body[data-srk-page="store"] #store-content > div:first-child {
+        background: var(--srk-surface);
+        border: 1px solid var(--srk-border);
+        border-radius: var(--srk-radius-card);
+        padding: 14px 16px;
+        margin-bottom: 24px;
+        box-shadow: var(--srk-shadow-card);
+    }
+
+    body[data-srk-page] #store-search { background: var(--srk-canvas); min-height: 44px; }
+    body[data-srk-page] :is(#profile-button, #cart-button, .cart-icon-btn) { border-radius: var(--srk-radius-control); }
+
+    body[data-srk-page] #featured-hero {
+        border: 1px solid rgba(212, 175, 55, .15);
+        border-radius: var(--srk-radius-feature);
+        box-shadow: var(--srk-shadow-feature);
+        margin-bottom: 48px;
+    }
+
+    body[data-srk-page] #featured-hero [aria-roledescription="slide"] > div:first-child {
+        background-image: radial-gradient(circle at 85% 10%, rgba(212, 175, 55, .16), transparent 38%);
+    }
+
+    body[data-srk-page] #featured-hero :is(img, [class~="backdrop-blur-sm"]) { border-radius: var(--srk-radius-card); }
+    body[data-srk-page] #featured-hero span[class~="uppercase"] {
+        border-radius: 999px;
+        color: var(--srk-gold-light);
+        border-color: rgba(212, 175, 55, .3);
+    }
+    body[data-srk-page] #featured-hero :is([data-hero-next], [data-hero-prev]) svg { color: #fff; stroke: #fff; }
+
+    /* Existing section wrappers and cards remain exactly where the renderers
+       put them; no products or controls are introduced, removed or re-ordered. */
+    body[data-srk-page] #dynamic-view > div:has(> .product-container) > div:first-child {
+        background: radial-gradient(circle at 90% 0, rgba(212, 175, 55, .13), transparent 40%), var(--srk-ink);
+        border-radius: var(--srk-radius-feature);
+        padding: 24px;
+        box-shadow: var(--srk-shadow-card);
+    }
+    body[data-srk-page] #dynamic-view > div:has(> .product-container) > div:first-child h2 { color: #fff; }
+
+    body[data-srk-page] article[data-product-id],
+    body[data-srk-page] [data-blog-card],
+    body[data-srk-page] #bundle-slider > div,
+    body[data-srk-page] #about article[class~="bg-white"] {
+        border-radius: var(--srk-radius-card);
+        border-color: var(--srk-border);
+        box-shadow: var(--srk-shadow-card);
+    }
+
+    body[data-srk-page] article[data-product-id]:hover,
+    body[data-srk-page] [data-blog-card]:hover,
+    body[data-srk-page] #bundle-slider > div:hover {
+        border-color: rgba(212, 175, 55, .5);
+        box-shadow: var(--srk-shadow-raised);
+    }
+
+    body[data-srk-page] article[data-product-id] > div:first-child {
+        background-color: var(--srk-soft);
+        border-bottom: 1px solid rgba(18, 23, 15, .045);
+    }
+
+    body[data-srk-page] article[data-product-id] h3 { font-size: 1.0625rem; }
+    body[data-srk-page] article[data-product-id] .cart-icon-btn { background-color: var(--srk-soft); }
+    body[data-srk-page] article[data-product-id] .cart-icon-btn:hover { background-color: var(--srk-ink); }
+    body[data-srk-page] article[data-product-id] .cart-icon-btn svg { stroke: var(--srk-ink); }
+    body[data-srk-page] article[data-product-id] .cart-icon-btn:is(:hover, :focus-visible) svg { stroke: #fff; }
+    body[data-srk-page] article[data-product-id] .cart-icon-btn:focus-visible { background-color: var(--srk-ink); }
+
+    body[data-srk-page] [data-category-card] {
+        background: var(--srk-surface);
+        padding: 10px 10px 18px;
+        border: 1px solid var(--srk-border);
+        border-radius: var(--srk-radius-card);
+        box-shadow: var(--srk-shadow-card);
+    }
+    body[data-srk-page] [data-category-card] > div { border-radius: var(--srk-radius-control); background: var(--srk-soft); }
+    body[data-srk-page] [data-category-card]:hover { border-color: rgba(212, 175, 55, .5); }
+    body[data-srk-page] [data-category-card]:hover h3 { color: var(--srk-gold-ink); }
+
+    body[data-srk-page] .srk-toolbar {
+        border: 1px solid var(--srk-border);
+        border-radius: var(--srk-radius-card);
+        padding: 18px;
+        background: var(--srk-surface);
+        box-shadow: var(--srk-shadow-card);
+    }
+    body[data-srk-page] .srk-toolbar__label { color: var(--srk-muted); }
+
+    /* Full-screen overlays stay full-screen; drawers stay drawers. */
+    body[data-srk-page] .srk-overlay { background-color: var(--srk-canvas); }
+    body[data-srk-page] .srk-overlay > header {
+        background: var(--srk-surface);
+        border-bottom: 1px solid var(--srk-border);
+        box-shadow: 0 5px 22px rgba(18, 23, 15, .035);
+    }
+    body[data-srk-page] .srk-overlay > header h2 { letter-spacing: -.035em; }
+    body[data-srk-page] .srk-drawer-panel { box-shadow: -18px 0 45px rgba(18, 23, 15, .14); }
+    body[data-srk-page] .srk-drawer-panel > div:first-child { background: var(--srk-canvas); }
+    body[data-srk-page] .srk-drawer-panel :is([class~="rounded-sm"], [class~="rounded-md"]) { border-radius: var(--srk-radius-control); }
+
+    body[data-srk-page] .srk-field :where(input:not([readonly]):not(:disabled), textarea, .srk-select__trigger) {
+        background: var(--srk-surface);
+        border-color: rgba(18, 23, 15, .2);
+        box-shadow: 0 2px 3px rgba(18, 23, 15, .015);
+    }
+    body[data-srk-page] .srk-field :is(input, textarea, .srk-select__trigger):focus-visible { border-color: var(--srk-gold-ink); }
+    /* Never mask validation red with the neutral field border. */
+    body[data-srk-page] .srk-field :is([aria-invalid="true"], .border-red-500) { border-color: #dc2626; }
+
+    body[data-srk-page] #checkout-form > section,
+    body[data-srk-page] #checkout-root aside > div {
+        background: var(--srk-surface);
+        border: 1px solid var(--srk-border);
+        border-radius: var(--srk-radius-card);
+        box-shadow: var(--srk-shadow-card);
+    }
+    body[data-srk-page] #checkout-form > section { padding: 24px; margin-bottom: 24px; }
+    body[data-srk-page] #checkout-root aside > div { overflow: hidden; }
+    body[data-srk-page] .payment-method-card { border-radius: var(--srk-radius-control); }
+
+    /* Marketing pages share the dashboard's visual language without becoming
+       an admin interface. All photography, copy and calls to action are kept. */
+    body[data-srk-page] [data-machinery-hero] {
+        background: radial-gradient(circle at 84% 22%, rgba(212, 175, 55, .12), transparent 34%), radial-gradient(circle at 4% 100%, rgba(66, 12, 20, .38), transparent 36%), var(--srk-ink);
+        border-bottom: 1px solid rgba(212, 175, 55, .2);
+    }
+    body[data-srk-page] [data-machinery-hero-media] {
+        border-radius: var(--srk-radius-feature);
+        border-color: rgba(212, 175, 55, .3);
+        box-shadow: 0 26px 65px rgba(0, 0, 0, .25);
+    }
+    body[data-srk-page] #hero-ctas a { min-height: 48px; }
+    body[data-srk-page] .why-choose-us { padding-block: 88px; }
+    body[data-srk-page] .statistics-container { gap: 20px; }
+    body[data-srk-page] .statistics-container .stat {
+        background: var(--srk-surface);
+        border: 1px solid var(--srk-border);
+        border-radius: var(--srk-radius-card);
+        padding: 32px 20px;
+        box-shadow: var(--srk-shadow-card);
+    }
+    body[data-srk-page] .statistics-container .stat h3 { font-size: 2.25rem; color: var(--srk-ink); }
+    body[data-srk-page] .statistics-container .stat > p:first-of-type { color: var(--srk-gold-ink); }
+
+    body[data-srk-page] .srk-theme-hero {
+        background: radial-gradient(circle at 90% 0, rgba(212, 175, 55, .16), transparent 35%), radial-gradient(circle at 0 100%, rgba(66, 12, 20, .36), transparent 38%), var(--srk-ink);
+        color: #fff;
+        border: 1px solid rgba(212, 175, 55, .16);
+        border-radius: var(--srk-radius-feature);
+        box-shadow: var(--srk-shadow-feature);
+        height: auto;
+        padding: 48px 32px;
+    }
+    body[data-srk-page] .srk-theme-hero h1 { color: #fff; }
+    body[data-srk-page] .srk-theme-hero > p { color: rgba(255, 255, 255, .72); line-height: 1.7; }
+    body[data-srk-page="catalogue"] .srk-theme-hero { width: calc(100% - 48px); max-width: 1232px; margin: 32px auto 0; }
+    body[data-srk-page="blog"] main > section:first-child { padding: 32px 24px 40px; }
+    body[data-srk-page="about"] #about { padding-top: 32px; }
+    body[data-srk-page="article"] main > article > header {
+        background: radial-gradient(circle at 88% 0, rgba(212, 175, 55, .07), transparent 36%), var(--srk-canvas);
+    }
+    body[data-srk-page="article"] .blog-prose { background: var(--srk-surface); margin-top: 40px; border-radius: var(--srk-radius-feature); box-shadow: var(--srk-shadow-card); }
+
+    body[data-srk-page] .conversion-hub:not([class~="bg-white"]) {
+        background: radial-gradient(circle at 90% 5%, rgba(212, 175, 55, .12), transparent 32%), radial-gradient(circle at 0 100%, rgba(66, 12, 20, .36), transparent 38%), var(--srk-ink);
+    }
+    body[data-srk-page] .conversion-hub:not([class~="bg-white"]) :is(input, textarea) {
+        border-radius: var(--srk-radius-control);
+        border-color: rgba(255, 255, 255, .25);
+        background-color: rgba(255, 255, 255, .07);
+    }
+    body[data-srk-page] .conversion-hub:not([class~="bg-white"]) :is(input, textarea):focus-visible { outline-color: var(--srk-gold-light); }
+    body[data-srk-page="contact"] .conversion-hub { background: transparent; padding-block: 56px; }
+    body[data-srk-page="contact"] #enquiry-form {
+        background: var(--srk-surface);
+        border: 1px solid var(--srk-border);
+        border-radius: var(--srk-radius-feature);
+        padding: 32px;
+        box-shadow: var(--srk-shadow-card);
+    }
+    body[data-srk-page="contact"] .connect-and-follow a[class~="border"] { border-radius: var(--srk-radius-control); box-shadow: var(--srk-shadow-card); }
+    body[data-srk-page="contact"] #enquiry-form :is(input, textarea) { background: var(--srk-canvas); }
+
+    body[data-srk-page="legal"] main > section:first-child { background: var(--srk-canvas); }
+    body[data-srk-page="legal"] main > section:first-child > section:first-child { background: var(--srk-surface); border-right: 1px solid var(--srk-border); }
+    body[data-srk-page="legal"] #policy-content { background: var(--srk-surface); }
+
+    body[data-srk-page] > footer { background: var(--srk-surface); border-top-color: var(--srk-border); }
+    body[data-srk-page] > footer a:hover { color: var(--srk-gold-ink); }
+
+    body[data-srk-page="payment"] { font-family: "Manrope", sans-serif; }
+    body[data-srk-page="payment"] #payment-main {
+        background: radial-gradient(circle at 85% 10%, rgba(212, 175, 55, .14), transparent 30%), radial-gradient(circle at 0 100%, rgba(66, 12, 20, .35), transparent 35%), var(--srk-ink);
+    }
+    body[data-srk-page="payment"] #payment-main section { border-radius: var(--srk-radius-feature); box-shadow: var(--srk-shadow-feature); }
+    body[data-srk-page="payment"] .eyebrow { color: var(--srk-gold-ink); }
+
+    @media (max-width: 767px) {
+        body[data-srk-page="store"] #store-content > div:first-child { padding: 10px; gap: 8px; }
+        body[data-srk-page] #store-search { padding-right: 12px; font-size: 16px; }
+        body[data-srk-page] :is(.srk-field input, .srk-field textarea, .conversion-hub input, .conversion-hub textarea) { font-size: 16px; }
+        body[data-srk-page] .srk-theme-hero { padding: 32px 22px; }
+        body[data-srk-page] .srk-theme-hero h1 { font-size: clamp(1.8rem, 7vw, 2.5rem); }
+        body[data-srk-page="catalogue"] .srk-theme-hero { width: calc(100% - 32px); margin-top: 20px; }
+        body[data-srk-page="blog"] main > section:first-child { padding: 20px 16px 32px; }
+        body[data-srk-page] #checkout-form > section { padding: 20px 16px; }
+        body[data-srk-page="contact"] #enquiry-form { padding: 24px 20px; }
+        body[data-srk-page] .srk-toolbar { padding: 14px; }
+        body[data-srk-page] .why-choose-us { padding-block: 56px; }
+    }
+}

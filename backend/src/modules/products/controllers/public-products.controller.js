@@ -12,8 +12,7 @@
  */
 const express = require('express');
 const { isMissingRelation, isPermissionDenied } = require('../../../core/database/postgrest-errors');
-const { fetchProductRows, withProductImages } = require('../infrastructure/product.repository');
-const { sendProductError } = require('../services/product-errors.service');
+const { publicCatalogue } = require('../services/public-catalogue.service');
 
 /** @returns {import('express').Router} */
 function publicProductsController() {
@@ -21,38 +20,7 @@ function publicProductsController() {
 
     router.get('/api/products/public', async (req, res) => {
         try {
-            const rows = await fetchProductRows();
-
-            const products = rows
-                .filter(product => product.is_active !== false)
-                .map(product => {
-                    // created_at rides along so the storefront's "Newest" sort has a
-                    // real key. It is a publication date, not internal detail.
-                    // asset_folder is NOT among these, and its removal was
-                    // checked rather than assumed: the only readers of that field
-                    // anywhere in the repo are in products.js, which is the admin
-                    // tab. No storefront file has ever read it. It is an internal
-                    // filesystem naming convention (assets/products/<Name>/), so
-                    // publishing it told every visitor how the server lays out
-                    // its disk in exchange for nothing being rendered.
-                    const {
-                        id, name, url_slug, description, featured_description, price,
-                        category_id, category_name,
-                        is_featured, is_best_seller, is_new_arrival, images, image_url,
-                        created_at
-                    } = withProductImages(product);
-
-                    // Product 9 is an industrial press that was seeded at ₹10 as a
-                    // smoke-test value. Never advertise or accept that value while
-                    // the corrective migration is waiting to be applied.
-                    const publicPrice = String(id) === '9' && Number(price) === 10 ? 'On request' : price;
-                    return {
-                        id, name, url_slug, description, featured_description, price: publicPrice,
-                        category_id, category_name,
-                        is_featured, is_best_seller, is_new_arrival, images, image_url,
-                        created_at
-                    };
-                });
+            const products = await publicCatalogue();
 
             res.status(200).json(products);
         } catch (error) {

@@ -12,15 +12,22 @@
     "",
     "TWO ENTRIES ARE NOT LITERAL PATHS AND ARE LISTED SEPARATELY BELOW. The",
     "legal shell answers a REGEX rather than a literal path, and the health",
-    "probes are not under /api."
+    "probes are not under /api.",
+    "2026-08-31: public GET product pages, legacy store metadata and sitemap were added for the authorized accessibility/SEO pass. No privileged or mutating routes were added.",
+    "2026-08-31: GET /api/orders/:id/status added for checkout-side payment recovery - same session-or-guest-token boundary as GET /api/orders/:id/invoice, no new authorization surface."
   ],
   "routes": [
     "GET /",
+    "GET /products",
+    "GET /products/:slug",
+    "GET /sitemap.xml",
+    "GET /store/store.html",
     "GET /api/auth/me",
     "GET /api/cart",
     "GET /api/categories/public",
     "GET /api/orders/mine",
     "GET /api/orders/:id/invoice",
+    "GET /api/orders/:id/status",
     "GET /api/products/public",
     "GET /api/projects/public",
     "PATCH /api/auth/me",

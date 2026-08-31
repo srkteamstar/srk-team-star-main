@@ -114,6 +114,19 @@ async function markOrderPaid({ orderId, gatewayPaymentId, gatewayOrderId, source
         return { ok: false, reason: 'gateway_error', message: 'The payment provider could not confirm that payment.' };
     }
 
+    // Authorised is not a mismatch — it is money in flight that has not
+    // finished clearing. Refusing to call it Paid is correct; writing Failed
+    // for it is not, because a genuine capture is very likely still coming.
+    // Left at 'Created' so that later capture settles through the normal
+    // path with nothing here to undo first.
+    if (gatewayPayment.status === 'authorized') {
+        return {
+            ok: false,
+            reason: 'authorized_pending_capture',
+            message: 'Your payment is authorized and awaiting confirmation. Please wait a moment and check again.'
+        };
+    }
+
     const mismatches = [];
     if (gatewayPayment.status !== 'captured') mismatches.push(`status=${gatewayPayment.status}`);
     if (Number(gatewayPayment.amount) !== Number(paymentRow.amount_paise)) {
@@ -132,9 +145,17 @@ async function markOrderPaid({ orderId, gatewayPaymentId, gatewayOrderId, source
         // really did move, cancelling would hide it.
         console.error(`PAYMENT VERIFICATION FAILED (${source}) for order ${orderId}, payment ${gatewayPaymentId}: ${mismatches.join('; ')}`);
 
-        await supabase.from('payments')
+        // Guarded on the row still being 'Created', atomically in the WHERE
+        // clause rather than trusted from the read at the top of this
+        // function. Without it, a stale or replayed capture event that no
+        // longer matches (say, the gateway now reports the payment refunded)
+        // could downgrade an already-settled Refunded/Paid row back to
+        // Failed. Only a payment nobody has yet confirmed may become Failed.
+        const { error } = await supabase.from('payments')
             .update({ status: PAYMENT_STATUS.failed, transaction_id: gatewayPaymentId })
-            .eq('id', paymentRow.id);
+            .eq('id', paymentRow.id)
+            .eq('status', PAYMENT_STATUS.created);
+        if (error) throw error;
 
         return { ok: false, reason: 'mismatch', message: 'That payment could not be verified against this order.' };
     }

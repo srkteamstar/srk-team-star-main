@@ -71,6 +71,8 @@ const STATIC_MOUNTS = [
  */
 const ROUTED_URLS = [
     '/',
+    '/products/',
+    '/sitemap.xml',
     '/legal/home.html',
     '/legal/privacy-policy.html',
     '/legal/terms-of-service.html',

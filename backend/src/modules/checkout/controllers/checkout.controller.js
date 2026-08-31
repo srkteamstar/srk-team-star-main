@@ -235,6 +235,74 @@ function checkoutController() {
                 };
             }
 
+            // ---- A LOST RESPONSE FOLLOWED BY A RETRY MUST LAND ON THIS SAME
+            // ORDER, not a second one written for the same basket.
+            //
+            // The browser generates one key for the life of one checkout
+            // session (checkout-module.js's start()/onPlaceOrder()) and sends
+            // it on every attempt from that session. If an order already
+            // carries it, that IS this attempt's order — hand back exactly
+            // what the first response would have, rather than writing another
+            // row. Migration 035's unique index is the actual guarantee (two
+            // near-simultaneous identical requests still collapse to one row
+            // through it, caught by the generic 23505 handler below); this
+            // check is what makes the common case — a genuinely lost
+            // response, then an ordinary retry — return cleanly instead of a
+            // second order or a bare 409.
+            // Bounded rather than rejected: a malformed or oversized value is
+            // not user-facing data worth failing an order over, so it is
+            // simply treated as absent — the checkout proceeds exactly as it
+            // would with no key at all, just without the retry protection.
+            const rawIdempotencyKey = trimmed(body.idempotency_key);
+            const idempotencyKey = (rawIdempotencyKey && rawIdempotencyKey.length <= 100) ? rawIdempotencyKey : null;
+            if (idempotencyKey) {
+                const existing = await supabase.from('orders').select('*').eq('idempotency_key', idempotencyKey).maybeSingle();
+                if (existing.error) throw existing.error;
+
+                if (existing.data) {
+                    let order = existing.data;
+                    const { data: paymentRows, error: paymentsError } = await supabase
+                        .from('payments').select('*').eq('order_id', order.id)
+                        .order('created_at', { ascending: false }).limit(1);
+                    if (paymentsError) throw paymentsError;
+                    const paymentRow = (paymentRows || [])[0] || null;
+
+                    // A GUEST'S PLAINTEXT ACCESS TOKEN IS NEVER STORED — only its
+                    // hash is (see createOrderAccessToken()) — so if the first
+                    // response genuinely never reached this browser, the token it
+                    // carried is gone for good, not merely unread. This retry is
+                    // the one safe place to repair that: it has already proven it
+                    // holds the idempotency key from the original request, which
+                    // is no less a secret than that request was, so minting a
+                    // fresh token and rotating the stored hash to match costs
+                    // nothing a genuine attacker didn't already need.
+                    let guestAccessToken;
+                    if (!order.user_id) {
+                        const guestAccess = createOrderAccessToken();
+                        const rotated = await supabase.from('orders')
+                            .update({ guest_access_token_hash: guestAccess.hash })
+                            .eq('id', order.id).select().maybeSingle();
+                        if (rotated.error) throw rotated.error;
+                        if (rotated.data) order = rotated.data;
+                        guestAccessToken = guestAccess.token;
+                    }
+
+                    return res.status(200).json({
+                        reference: orderReference(order),
+                        order_id: order.id,
+                        totals: priced.totals,
+                        order_access_token: guestAccessToken,
+                        customer: profile ? await publicProfile(profile) : null,
+                        payment: (paymentRow && paymentRow.gateway === 'razorpay' && paymentRow.gateway_order_id) ? {
+                            key_id: razorpay.publicKeyId(),
+                            gateway_order_id: paymentRow.gateway_order_id,
+                            amount_paise: paymentRow.amount_paise,
+                            currency: paymentRow.currency || CURRENCY
+                        } : undefined
+                    });
+                }
+            }
+
             // ---- 3. Keep the saved address current.
             //
             // Best-effort on purpose. The order's own frozen copy is written below
@@ -278,6 +346,7 @@ function checkoutController() {
                 p_user_id: profile ? profile.id : null,
                 p_order: {
                     guest_access_token_hash: guestAccess ? guestAccess.hash : null,
+                    idempotency_key: idempotencyKey || null,
                     amount: priced.totals.subtotal,
                     shipping_amount: priced.totals.shipping,
                     tax_amount: priced.totals.tax,

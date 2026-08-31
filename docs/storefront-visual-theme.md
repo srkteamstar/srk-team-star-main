@@ -91,3 +91,11 @@ npm run test:browser
 
 The theme is plain CSS and does not depend on new Tailwind utilities. A normal
 `npm run build:css` can still be run to validate the existing stylesheet build.
+
+## Follow-up: remove decorative slashes
+
+At the user's request, removed all ten triple-slash SVG decorations from the
+home, catalogue, about and blog index pages. The surrounding SVG heading text,
+horizontal rules, view boxes and layout remain unchanged. No styles or
+application logic were changed in this follow-up. The site-wide source search
+finds no remaining matching decorations, and all three structural checks pass.

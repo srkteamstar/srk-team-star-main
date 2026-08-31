@@ -7,7 +7,10 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "node tools/verify-vercel-public.js",
+    "build": "node tools/build-web-assets.js --check && node tools/verify-vercel-public.js",
+    "build:images": "node tools/optimize-local-images.js",
+    "build:assets": "node tools/build-web-assets.js",
+    "verify:assets": "node tools/build-web-assets.js --check",
     "verify": "npm --prefix backend run verify",
     "test": "npm --prefix backend test",
     "test:all": "npm --prefix backend run test:all"

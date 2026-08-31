@@ -4,8 +4,8 @@
  *
  * STATIC FILES
  *
- * The project has no build step, so a script filename never changes when its
- * contents do. Express defaults to `max-age=0` here, which a browser is free
+ * Stable source URLs remain available, and must revalidate when their contents
+ * change. Express defaults to `max-age=0` here, which a browser is free
  * to treat as a hint: Chrome will serve a soft-reloaded page out of its
  * in-memory cache and run a stale module against a current API. That is what
  * produced the 410 from /api/submit-form below — a cached copy of
@@ -15,9 +15,9 @@
  * time. The browser sends If-None-Match and gets a cheap 304 unless the file
  * really did change, so this costs a header round trip, not a re-download.
  *
- * Only the files that carry behaviour are pinned this way. Images and fonts
- * under assets/ keep the default, because their bytes do not drift under a
- * stable name.
+ * Content-hashed generated JS, CSS, fonts and image variants instead receive
+ * one-year immutable caching. Their URL changes whenever their bytes change.
+ * Other images and fonts under assets/ retain the default cache policy.
  *
  * WHAT CHANGED IN THE RESTRUCTURE
  * ---------------------------------------------------------------------------
@@ -33,8 +33,12 @@
 const express = require('express');
 const { STATIC_MOUNTS } = require('../config/static-mounts');
 const paths = require('../config/paths');
+const { pageFiles, sendHtmlPage } = require('./page-metadata');
 
 const BEHAVIOUR_FILE = /\.(?:js|css|html)$/i;
+// Only content-addressed build output may be immutable. Auth, checkout, HTML
+// and stable source URLs retain their existing cache policy.
+const IMMUTABLE_ASSET = /[\\/]assets[\\/](?:versioned[\\/][a-f0-9]{16}[\\/][^\\/]+\.(?:js|css|woff2)|optimized[\\/][^\\/]+\.[a-f0-9]{16}\.(?:webp|png))$/i;
 
 /**
  * Vercel ignores express.static(), and its CDN serves assets and browser
@@ -69,7 +73,7 @@ function mountVercelPages(app) {
             const fileUrl = `/${relative}`;
             const send = (req, res) => {
                 res.setHeader('Cache-Control', 'no-cache');
-                res.sendFile(full);
+                sendHtmlPage(req, res, fs.readFileSync(full, 'utf8'), res.locals.pageMetadata);
             };
 
             app.get(fileUrl, send);
@@ -103,13 +107,25 @@ function mountStaticFiles(app) {
         return;
     }
 
+    // Only exact, known HTML documents are rendered. Assets keep their original
+    // static semantics; no user-supplied path is ever passed to the filesystem.
+    app.use((req, res, next) => {
+        if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+        const file = pageFiles.get(req.path);
+        if (!file) return next();
+        try { return sendHtmlPage(req, res, require('fs').readFileSync(file, 'utf8'), res.locals.pageMetadata); }
+        catch (error) { return next(error); }
+    });
+
     STATIC_MOUNTS.forEach(({ urlPrefix, dir }) => {
         app.use(urlPrefix, express.static(dir, {
             dotfiles: 'ignore',
             etag: true,
             lastModified: true,
             setHeaders: (res, filePath) => {
-                if (BEHAVIOUR_FILE.test(filePath)) {
+                if (IMMUTABLE_ASSET.test(filePath)) {
+                    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+                } else if (BEHAVIOUR_FILE.test(filePath)) {
                     res.setHeader('Cache-Control', 'no-cache');
                 }
             }

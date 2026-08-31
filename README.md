@@ -34,8 +34,9 @@ One process serves the API **and** the whole frontend. Open
 
 While editing the backend, use **`npm run dev`** (`node --watch server.js`)
 instead. This is not a convenience, it is the fix for a trap the layout creates:
-HTML, CSS and browser JS are read off disk per request, so an edit shows up on
-the next reload — which trains you to expect that everywhere. Everything under
+HTML is read off disk per request. CSS and browser JS now use generated,
+content-hashed URLs: run `npm run build:assets` from the repository root after
+editing their sources, then reload. Everything under
 `backend/src/` is loaded into memory once at boot. An edit to a commercial
 constant, a route or a validation rule changes **nothing** until the process
 restarts, with no error and no clue. `.env` is read at boot too.
@@ -51,7 +52,7 @@ It answers with the commercial constants the **running** process is using.
 
 ---
 
-## The one build step, and it is only CSS
+## CSS and web asset builds
 
 ```bash
 npm run build:css     # compile once
@@ -72,8 +73,25 @@ so **write class names out in full**; a name assembled from pieces
 (`'bg-' + colour`) will not survive the build.
 
 The root `public/` tree is also the source Vercel serves through its CDN. It is
-authored and committed, not generated during deployment; Vercel discovers an
+committed, not generated during deployment; Vercel discovers an
 Express project's static files before running an optional build command.
+
+`npm run build:css` also refreshes the versioned asset URLs. After other browser
+JS/CSS edits (including changes produced by `watch:css`), run `npm run build:assets`
+from the root. Keep editing the original files in `public/js/` and
+`public/assets/styles/`, not their generated copies in `public/assets/versioned/`.
+The `data-asset-source` attributes in HTML record those original paths.
+
+`npm run build` verifies that generated files, image hashes and all HTML references
+are current before deployment. Commit the generated files and manifests along
+with source changes. Hash-named assets receive immutable caching; HTML, stable
+source URLs and private API responses do not acquire that policy.
+
+Only the allowlisted local PNGs in `tools/optimize-local-images.js` are converted;
+Supabase images and existing AVIFs are untouched. Original images stay in place.
+To regenerate image variants, supply Sharp through `SRK_SHARP_MODULE` (an absolute
+path to an installed Sharp module), run `npm run build:images`, then
+`npm run build:assets`. Normal builds need no image-conversion dependency.
 
 ---
 

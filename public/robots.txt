@@ -12,5 +12,6 @@
 # block in backend/src/core/http/private-paths.js.
 
 User-agent: *
-Disallow: /store/checkout.html
+# Checkout remains noindex via HTML and X-Robots-Tag. Allow the crawler to
+# retrieve that directive; disallow would prevent it from seeing noindex.
 Disallow: /api/
