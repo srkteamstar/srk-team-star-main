@@ -78,14 +78,15 @@ test('Mobile navigation is named, contains focus and restores background interac
 test('Landing slideshow provides a working pause and play control', async ({ page }) => {
     await page.route('**/api/products/public', route => route.fulfill({ json: [1, 2, 3].map(id => ({ id, name: 'Machine ' + id, category_id: 10, category_name: 'Machinery' })) }));
     await page.goto('/');
-    const control = page.getByRole('button', { name: 'Pause slideshow' });
+    // Icon-only: the accessible name lives in aria-label, not visible text.
+    const control = page.locator('#machinery-hero-pause');
     await control.click();
-    await expect(control).toHaveText('Play slideshow');
+    await expect(control).toHaveAttribute('aria-label', 'Play slideshow');
     const active = await page.locator('[data-machinery-hero-slide][data-active="true"]').getAttribute('data-product-id');
     await page.waitForTimeout(2800);
     await expect(page.locator('[data-machinery-hero-slide][data-active="true"]')).toHaveAttribute('data-product-id', active);
     await control.click();
-    await expect(control).toHaveText('Pause slideshow');
+    await expect(control).toHaveAttribute('aria-label', 'Pause slideshow');
 });
 
 test('Static copy, bypass link and product discovery work without JavaScript', async ({ browser }) => {
