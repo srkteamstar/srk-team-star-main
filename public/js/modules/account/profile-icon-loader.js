@@ -339,6 +339,7 @@
             '        <div id="account-orders"></div>',
             '    </section>',
 
+            '    ' + bannerHTML('account-form-error'),
             '    <div class="pt-6 border-t border-[#12170f]/10">',
             '        <button type="button" id="account-signout" class="text-sm font-bold text-[#1f271b]/50 hover:text-red-600 transition-colors">Sign out</button>',
             '    </div>',
@@ -586,90 +587,6 @@
     }
 
     // ------------------------------------------------------------------
-    // THE "NO SUCH ACCOUNT" DIALOG
-    // ------------------------------------------------------------------
-    // Typing an email that has never been registered is not a mistake to
-    // correct in place — it is a fork. Either the identifier is wrong (a
-    // different address, a phone number we do not hold), or there is genuinely
-    // no account yet. A red line under the field answers neither, so this
-    // asks, says why it is asking, and offers both roads.
-    //
-    // It is a real layer over the form rather than another full-screen state,
-    // for one specific reason: the identifier the visitor typed stays visible
-    // behind it. Half of "did I type that right?" is being able to look.
-    //
-    // THE LAYER ITSELF NOW LIVES IN store-overlay-shared-module.js
-    // ------------------------------------------------------------
-    // It was written here, and it was extracted the moment a second surface
-    // needed one — cart-module.js has to ask which of two carts to keep when
-    // somebody signs in holding both. That is the same move
-    // product-section-shared-module.js made for the card and
-    // store-overlay-shared-module.js made for the overlay itself, and the
-    // notes that made this thing correct (the window-not-document keydown,
-    // the cancelled Tab, one dialog at a time) went with it rather than
-    // being left behind on a copy.
-    //
-    // What stays here is the two decisions that are this surface's own:
-    //
-    //   * `host` is the account overlay's node, so the layer is `absolute`
-    //     inside it and dims only this surface. The identifier the visitor
-    //     typed stays visible behind it — half of "did I type that right?"
-    //     is being able to look.
-    //   * No dialog without an overlay to put it in. `openChoiceDialog`
-    //     would happily mount on <body>; that is right for the cart and
-    //     wrong here, where the question is about the form underneath.
-    function openChoiceDialog(options) {
-        const overlay = handle && handle.node;
-        if (!overlay) return null;
-
-        return chrome.openChoiceDialog(Object.assign({
-            host: overlay,
-            idPrefix: 'account-dialog'
-        }, options));
-    }
-
-    // The identifier goes into whichever signup field it is: an email into the
-    // email box, anything else into the phone box. The same test the server
-    // uses (an "@" anywhere), so the two cannot disagree about what was typed.
-    function prefillFrom(identifier) {
-        const value = String(identifier || '').trim();
-        return value.indexOf('@') !== -1 ? { email: value } : { phone: value };
-    }
-
-    function showNoAccountDialog(identifier) {
-        const typed = '<span class="font-bold text-[#12170f]">' + escapeHtml(identifier) + '</span>';
-
-        openChoiceDialog({
-            title: 'We could not find that account',
-            body: [
-                '<p>Nothing in our records matches ' + typed + '.</p>',
-                '<p>That usually means one of two things: the account is saved under a different email or phone number, or there is no account here yet.</p>',
-                '<p class="text-[#12170f] font-semibold">How would you like to carry on?</p>'
-            ].join(''),
-            actions: [
-                {
-                    label: 'Try a different email or phone',
-                    onPick: () => {
-                        const field = document.getElementById('account-identifier');
-                        if (!field) return showSignIn();
-
-                        // Selected, not merely focused: the next thing typed
-                        // replaces what did not work, which is what somebody
-                        // reaching for a second address is about to do.
-                        field.focus({ preventScroll: true });
-                        field.select();
-                    }
-                },
-                {
-                    label: 'Create a new account',
-                    primary: true,
-                    onPick: () => showSignUp(prefillFrom(identifier))
-                }
-            ]
-        });
-    }
-
-    // ------------------------------------------------------------------
     // ACTIONS
     // ------------------------------------------------------------------
     async function onSignIn(event) {
@@ -691,21 +608,16 @@
         if (!result.ok) {
             setBusy(false, 'Sign In');
 
-            // "No such account" is a fork, not a validation failure, so it
-            // gets the dialog rather than a red line under the field. The
-            // server flags it explicitly (account_not_found) rather than the
-            // client matching on the wording of a sentence.
-            if (result.accountNotFound) {
-                return showNoAccountDialog(identifier);
-            }
-
-            // Anything else is a refusal this form cannot act on, so it gets
-            // the same plain banner every other refusal does. Deliberately
-            // without a reason and without anywhere to go: the server does
-            // not say why an account it will not sign in was refused, and
-            // guessing here on the wording of a sentence would put the
-            // disclosure back that the server declined to make.
-
+            // S05: the server used to flag an unknown identifier explicitly
+            // (account_not_found), which this form turned into a "we could
+            // not find that account, sign up instead?" dialog no other
+            // refusal got — a state disclosure of its own, on top of the one
+            // the fix closed on the server. Every login refusal now gets the
+            // same plain banner, deliberately without a reason and without
+            // anywhere else to go: the server does not say why an identifier
+            // and password could not be verified, and branching here on the
+            // shape of the response would put the disclosure back that the
+            // server declined to make.
             return reportFailure(result);
         }
 
@@ -795,9 +707,28 @@
         next();
     }
 
+    // S02: this used to await signOut() and paint the "Signed out" screen
+    // regardless of what came back — customer-session-module.js used to
+    // guarantee a { ok } shape either way, so nothing here could tell a
+    // confirmed sign-out from a server that never heard the request. Now that
+    // signOut() only resolves ok:true after the server confirms the session
+    // is gone, a failure keeps the account view on screen with an explicit
+    // banner and a button the visitor can press again, rather than a
+    // confirmation screen with a session still live behind it.
     async function onSignOut() {
-        await account.signOut();
-        if (handle) showSignedOut();
+        const button = document.getElementById('account-signout');
+        if (button) { button.disabled = true; button.textContent = 'Signing out…'; }
+
+        const result = await account.signOut();
+        if (!handle) return;
+
+        if (!result.ok) {
+            if (button) { button.disabled = false; button.textContent = 'Sign out'; }
+            showBanner(result.error || 'Sign-out could not be confirmed. Check your connection and try again.');
+            return;
+        }
+
+        showSignedOut();
     }
 
     // A failure that names a field is put against that field; one that does not
