@@ -10,9 +10,14 @@ const server = spawn(process.execPath, [path.join(__dirname, 'authz-harness.js')
     stdio: ['ignore', 'pipe', 'inherit']
 });
 
-// Both suites run against the one booted server, in order. A failure in
-// either fails the run — `npm test` is a gate, not a report.
-const SUITES = ['authz.test.js', 'payments.test.js'];
+// The first two suites run against the one booted server, in order. A
+// failure in either fails the run — `npm test` is a gate, not a report.
+// checkout-hardening.test.js is different: it boots and tears down its OWN
+// harness on a separate port, because its scenarios need checkout-attempt
+// budget the shared harness's checkoutLimiter has no room left for (see its
+// header comment) — so it is spawned here like the others, but is
+// self-contained rather than depending on the server this file started.
+const SUITES = ['authz.test.js', 'payments.test.js', 'checkout-hardening.test.js'];
 
 function runSuites(index, worstCode) {
     if (index >= SUITES.length) {

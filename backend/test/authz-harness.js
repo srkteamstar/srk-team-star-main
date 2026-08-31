@@ -106,6 +106,11 @@ const db = {
     // cart is invisible to another, and a fixture written by hand here would
     // let that pass without PUT /api/cart having stored anything.
     cart_items: [],
+    // Migration 036's per-customer revision counter, read by GET /api/cart
+    // and locked/incremented by the replace_customer_cart RPC below. Empty
+    // for the same reason cart_items is: a customer with no row here reads
+    // as revision 0, which is the RPC's own starting point.
+    cart_revisions: [],
     products: [
         { id: 1, name: 'Fake Machine', url_slug: 'fake-machine', description: 'd', featured_description: null,
           price: '1000', category_id: 10, asset_folder: 'Fake Machine', is_active: true,
@@ -451,6 +456,61 @@ const fakeSupabase = {
             return { data: { id: request.id, created_at: request.created_at }, error: null };
         }
 
+        if (name === 'replace_customer_cart') {
+            const userId = args.p_user_id;
+            const items = Array.isArray(args.p_items) ? args.p_items : [];
+
+            let revRow = db.cart_revisions.find(row => String(row.user_id) === String(userId));
+            if (!revRow) {
+                revRow = { user_id: userId, revision: 0 };
+                db.cart_revisions.push(revRow);
+            }
+
+            const expected = args.p_expected_revision;
+            if (expected !== null && expected !== undefined && Number(expected) !== Number(revRow.revision)) {
+                return { data: { conflict: true, revision: revRow.revision }, error: null };
+            }
+
+            // Same upsert-before-delete ordering as the real function and
+            // the JS route it replaced.
+            const keepIds = new Set(items.map(item => String(item.product_id)));
+            items.forEach(item => {
+                const existing = db.cart_items.find(row =>
+                    String(row.user_id) === String(userId) && String(row.product_id) === String(item.product_id));
+                if (existing) {
+                    Object.assign(existing, {
+                        quantity: item.quantity,
+                        product_name: item.product_name || '',
+                        product_price: item.product_price || '',
+                        category_name: item.category_name || '',
+                        image_url: item.image_url || ''
+                    });
+                } else {
+                    db.cart_items.push(Object.assign({ id: ++nextId, user_id: userId }, {
+                        product_id: item.product_id,
+                        quantity: item.quantity,
+                        product_name: item.product_name || '',
+                        product_price: item.product_price || '',
+                        category_name: item.category_name || '',
+                        image_url: item.image_url || ''
+                    }));
+                }
+            });
+            db.cart_items = db.cart_items.filter(row =>
+                String(row.user_id) !== String(userId) || keepIds.has(String(row.product_id)));
+
+            revRow.revision = Number(revRow.revision) + 1;
+
+            return {
+                data: {
+                    conflict: false,
+                    revision: revRow.revision,
+                    items: db.cart_items.filter(row => String(row.user_id) === String(userId)).map(r => Object.assign({}, r))
+                },
+                error: null
+            };
+        }
+
         if (name !== 'create_store_order') return { data: null, error: { message: `unstubbed RPC: ${name}` } };
         if (control.consumeAtomicCheckoutFailure()) {
             return { data: null, error: { message: 'forced atomic checkout failure' } };
@@ -541,6 +601,13 @@ globalThis.fetch = async function (url, options) {
 
     // Create an order.
     if (href.endsWith('/v1/orders') && (options || {}).method === 'POST') {
+        // F01's reproduction: the local order row already exists (durable)
+        // by the time this call happens, and THIS is the call that fails —
+        // an outage or a 5xx from Razorpay, not a validation error. See
+        // harness-control.failNextGatewayOrderCreate().
+        if (control.consumeGatewayOrderCreateFailure()) {
+            throw new Error('forced transient gateway order-create failure');
+        }
         const sent = JSON.parse(options.body);
         gatewayOrderSeq += 1;
         return json(200, {

@@ -9,6 +9,7 @@
 // and the storefront has to refuse such an account at its door. That is
 // section 1.
 const BASE = 'http://localhost:3456';
+const crypto = require('crypto');
 const control = require('./harness-control');
 const PASSWORD = 'correct-horse-42';
 
@@ -234,26 +235,31 @@ async function req(cookies, method, path, body, extraHeaders) {
     console.log('\n=== 4C. A LOST CHECKOUT RESPONSE, THEN A RETRY, IS ONE ORDER ===');
     // Same idempotency key on two otherwise-identical requests must return
     // the SAME order rather than writing a second one for the same basket.
-    const retryKey = `idem-test-${Date.now()}`;
+    // A REAL crypto.randomUUID()-shaped key, on purpose (audit finding S04):
+    // checkout.controller.js now requires the retry key to look like one of
+    // these or it is treated as though none were sent at all.
+    const retryKey = crypto.randomUUID();
+    const retryProof = crypto.randomUUID();
     const retryGuest = jar();
-    const firstAttempt = await req(retryGuest, 'POST', '/api/checkout', {
+    const retryBody = () => ({
         items: [{ product_id: 1, quantity: 1 }],
         contact: { name: 'Retry Guest', email: 'retry-guest@example.test', phone: '9333333333' },
         address: { address_line: 'Retry Road', city: 'Gohana', state: 'Haryana', postal_code: '131301' },
-        payment_mode: 'offline', idempotency_key: retryKey
+        payment_mode: 'offline', idempotency_key: retryKey, checkout_proof: retryProof
     });
+    const firstAttempt = await req(retryGuest, 'POST', '/api/checkout', retryBody());
     check('the first attempt places an order normally',
         firstAttempt.status === 201 && firstAttempt.body.order_id, JSON.stringify(firstAttempt.body).slice(0, 160));
+    check('...and names its lifecycle state explicitly (F01)',
+        firstAttempt.body.checkout_state === 'placed', JSON.stringify(firstAttempt.body.checkout_state));
 
-    const secondAttempt = await req(retryGuest, 'POST', '/api/checkout', {
-        items: [{ product_id: 1, quantity: 1 }],
-        contact: { name: 'Retry Guest', email: 'retry-guest@example.test', phone: '9333333333' },
-        address: { address_line: 'Retry Road', city: 'Gohana', state: 'Haryana', postal_code: '131301' },
-        payment_mode: 'offline', idempotency_key: retryKey
-    });
+    const secondAttempt = await req(retryGuest, 'POST', '/api/checkout', retryBody());
     check('a retry with the same idempotency key returns the SAME order, not a new one',
         secondAttempt.status === 200 && secondAttempt.body.order_id === firstAttempt.body.order_id,
         `first=${firstAttempt.body.order_id} second=${JSON.stringify(secondAttempt.body).slice(0, 160)}`);
+    check('...reporting the SAME frozen totals rather than re-pricing (F08)',
+        JSON.stringify(secondAttempt.body.totals) === JSON.stringify(firstAttempt.body.totals),
+        JSON.stringify({ first: firstAttempt.body.totals, second: secondAttempt.body.totals }));
 
     // The retry mints a FRESH guest token rather than replaying the first
     // one — the plaintext token is never stored, so if the first response
@@ -265,6 +271,17 @@ async function req(cookies, method, path, body, extraHeaders) {
         { 'X-Order-Access-Token': secondAttempt.body.order_access_token });
     check('...and that fresh token actually opens the order',
         r.status === 200 && r.body.order_id === firstAttempt.body.order_id, JSON.stringify(r.body));
+
+    // The heavier S04/F08/F01 scenarios below this point — weak-key
+    // rejection, a guest-proof mismatch, a changed-basket retry, cross-
+    // account key replay, and the 502-then-retry gateway-failure sequence —
+    // moved to their own self-contained suite (checkout-hardening.test.js),
+    // each against a freshly spawned harness on its own port. checkoutLimiter
+    // is a real 15-per-15-minutes-per-IP limiter shared by every request this
+    // whole `npm test` run makes against ONE harness instance (see section
+    // 8's comment in payments.test.js), and this suite plus payments.test.js
+    // already spend exactly that budget between them — there is no room left
+    // here for the extra attempts those scenarios need.
 
     console.log('\n=== 5. EXISTING CONTACT DETAILS STILL REMAIN A GUEST ORDER ===');
     const guest2 = jar();
@@ -518,6 +535,48 @@ async function req(cookies, method, path, body, extraHeaders) {
     r = await req(custB, 'GET', '/api/cart');
     check("B's cart survived A emptying theirs",
         r.status === 200 && r.body.items.length === 1, JSON.stringify(r).slice(0, 140));
+
+    console.log('\n=== 19. CART WRITES ARE REVISION-CHECKED, NOT LAST-WRITE-WINS (F06) ===');
+    // A's cart is empty after section 18. GET carries the revision that read
+    // reflects — the number cart-module.js is now expected to carry forward
+    // on its next PUT (migration 036's replace_customer_cart).
+    r = await req(custA, 'GET', '/api/cart');
+    const revBase = r.body.revision;
+    check('GET /api/cart reports a numeric revision', Number.isInteger(revBase), JSON.stringify(r.body).slice(0, 100));
+
+    r = await req(custA, 'PUT', '/api/cart', {
+        items: [{ id: 1, name: 'Fake Machine', category_name: 'Machinery', price: '1000', image_url: '', quantity: 1 }],
+        revision: revBase
+    });
+    check('a write carrying the CURRENT revision succeeds and reports the new one',
+        r.status === 200 && r.body.revision === revBase + 1, JSON.stringify(r.body).slice(0, 140));
+    const revAfterFirst = r.body.revision;
+
+    // A second write still naming the NOW-STALE revision — the shape of two
+    // overlapping writes for the same customer, or a second tab that has not
+    // re-read since the first tab's save landed — must be refused rather
+    // than silently applied over the newer state.
+    r = await req(custA, 'PUT', '/api/cart', {
+        items: [{ id: 1, name: 'Fake Machine', category_name: 'Machinery', price: '1000', image_url: '', quantity: 9 }],
+        revision: revBase
+    });
+    check('a write carrying a STALE revision is refused with 409, not applied (F06)',
+        r.status === 409 && r.body.revision === revAfterFirst,
+        `${r.status} ${JSON.stringify(r.body).slice(0, 140)}`);
+
+    r = await req(custA, 'GET', '/api/cart');
+    check('...and the stale write left the cart exactly as the winning write left it',
+        r.status === 200 && r.body.items.length === 1 && r.body.items[0].quantity === 1 && r.body.revision === revAfterFirst,
+        JSON.stringify(r.body).slice(0, 140));
+
+    // A write naming no revision at all — an old client, or the first save
+    // this browser has ever made — is not refused for it: the same
+    // unconditional "last write wins" the route always offered.
+    r = await req(custA, 'PUT', '/api/cart', {
+        items: [{ id: 1, name: 'Fake Machine', category_name: 'Machinery', price: '1000', image_url: '', quantity: 5 }]
+    });
+    check('a write with no revision at all still succeeds (backward compatible)',
+        r.status === 200 && r.body.items[0].quantity === 5, JSON.stringify(r.body).slice(0, 140));
 
     console.log('\n' + '='.repeat(64));
     console.log(`RESULT: ${pass} passed, ${fail} failed`);
