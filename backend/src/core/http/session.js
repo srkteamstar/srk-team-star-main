@@ -13,11 +13,15 @@ const { SupabaseSessionStore } = require('./supabase-session-store');
 //
 // MemoryStore is the express-session default, and it is what makes a server
 // restart sign everybody out. That is a real cost on a storefront — a shopper
-// mid-checkout has to sign in again after a deploy — and it is accepted here
-// because the alternative is a session table, and the cart it protects is
-// already persisted against the account rather than against the session.
-// Worth revisiting if this ever runs on more than one process: two instances
-// with private MemoryStores would sign a customer out at random.
+// mid-checkout has to sign in again after a deploy — but it is confined to
+// local development below: production uses SupabaseSessionStore precisely
+// because MemoryStore is process-local, and a deployment that runs more than
+// one process (or replaces one on every request, as a serverless platform
+// can) would otherwise have each instance holding its own private sessions —
+// signing a customer out at random depending on which one answered. The cart
+// a session protects is persisted against the account rather than the
+// session either way, which is what makes the local-dev shortcut safe to take
+// at all.
 // A session secret is what makes the signed cookie unforgeable. Refusing to
 // start is the only safe answer to its absence: the alternative is a process
 // that looks healthy while issuing sessions anybody can mint.

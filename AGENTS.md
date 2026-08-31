@@ -210,7 +210,9 @@ is looking at. The quote overlay is the route for those.
 
 ## Migrations
 
-31 files in `backend/migrations/`, run in order. Seven are worth knowing:
+33 files in `backend/migrations/` as of the date below, run in order — see that
+directory for the current count, since parallel work adds to it between
+updates here. Seven are worth knowing:
 
 - **025** puts the whole order write (header, items, frozen address, payment
   row) inside one Postgres function. **Must be run before checkout works at all.**
@@ -234,11 +236,33 @@ deployment turns into an outage.
 
 ---
 
+## Source facts verified 2026-08-31
+
+The rules above this line are permanent architecture and do not go stale. The
+lines below it are dated operational status — true on the date given, and
+worth re-checking rather than trusted indefinitely. This section exists so the
+two are not mixed, after an audit found several status claims elsewhere in
+this file describing a state the source no longer matched.
+
+- Production sessions and rate-limit state use Supabase
+  (`core/http/supabase-session-store.js`, migration 032), not an in-process
+  MemoryStore. See `core/http/session.js` for which one a given process picks.
+- Customer product navigation is keyboard-operable and public About/Blog pages
+  exist (`frontend/pages/about.html`, `frontend/pages/blog/`) — see the
+  correction to "Known issues" just below.
+- Numbered migrations extend through at least 033; check `backend/migrations/`
+  for today's count.
+
+Deployment state (migrations actually run, schedules actually installed,
+production configuration actually set) is not re-verified by editing this
+file — see "Still open before live keys" below for what is known to still be
+outstanding, and confirm the rest against the real environment rather than
+against prose.
+
+---
+
 ## Known issues, carried over unchanged from `#1`
 
-- The header nav's **`/blog`** and **`/about`** links 404 on the public pages.
-  Left as-is **by explicit request** — building the pages is the fix; removing
-  the links is not.
 - The store's **"Bought Together → View All"** is still `href="#"`. Its only
   plausible destination is the Complete Sets nav button, and no section is
   registered against `data-policy="combos"`.
@@ -247,11 +271,14 @@ deployment turns into an outage.
   match them. **If you make them live, give them real product ids** — do not
   hide or regenerate the row. The home view is hand-designed and is the owner's.
 - `public/js/legacy/` holds two modules no page loads.
-- **Product details is mouse-only.** An `<article>` is not focusable, so a
-  keyboard visitor can reach Buy Now and the bag icon but not the details route.
-  The fix is `tabindex="0" role="button"` plus an Enter/Space handler in
-  `public/js/shared/product-section-shared-module.js` — small, but it adds a
-  tab stop to a render path five surfaces share, so it belongs in its own change.
+
+Two items formerly listed here no longer apply and have been removed rather
+than left to mislead: the header nav's `/blog` and `/about` links now resolve
+to real pages, and product details in
+`public/js/shared/product-section-shared-module.js` already carries
+`tabindex="0" role="button"` plus a keyboard handler, so it is no longer
+mouse-only. Neither correction implies the underlying code was touched by this
+edit — only this file's description of it.
 
 ## Still open before live keys
 
