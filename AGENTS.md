@@ -285,7 +285,26 @@ edit — only this file's description of it.
 - The reconciliation schedule is **not installed** on any machine
   (`scripts/schedule-reconcile.ps1 -Apply`). The script existing is not the same
   as it running.
-- `GST_RATE`, `SHIPPING_FLAT`, `SHIPPING_FREE_ABOVE` are placeholders.
+- **GST_RATE (18%) and the ₹50,000 free-shipping threshold are confirmed
+  business terms, not placeholders**, per the operator directly, 2026-09-01.
+  `commercial.js`'s defaults already carried these values and `core/config/
+  commercial.js`'s own header already called them "confirmed commercial
+  terms" — this line previously contradicted that (and named a
+  `SHIPPING_FLAT` variable that has never existed in this file) rather than
+  the values themselves being wrong. Production still refuses to boot
+  without `GST_RATE`/`SHIPPING_FREE_ABOVE` set explicitly in its
+  environment — confirming the number is not the same as setting the
+  env var.
+- **Refund policy confirmed, 2026-09-01: a refund is issued only for an
+  order that has already been paid and is then cancelled** — either by the
+  business, or by the customer's request after contacting the team.
+  `can_cancel` (customer-orders.controller.js) already only ever allows
+  self-service cancellation while an order is unpaid, and even that path
+  now routes through a contact-support notice rather than an instant
+  cancel — there was no code change needed for this pass, only recording
+  it in `public/js/modules/legal/policy-loader.js`'s Returns & Refund
+  Policy text, which previously covered damaged/defective goods but never
+  stated the cancellation-refund rule itself.
 - **Migration 028's credential-reset plan is still open.** The migration
   itself is applied (below), but identifier-era accounts with a null
   password hash are locked out until each is individually walked through a
