@@ -14,6 +14,7 @@
   },
   "scripts": {
     "test": "node test/run.js && node --test test/seo.test.js",
+    "test:db": "node --test test/integration/database.test.js",
     "test:browser": "playwright test",
     "reconcile": "node scripts/reconcile.js",
     "start": "node server.js",
@@ -23,7 +24,7 @@
     "set-customer-password": "node scripts/set-customer-password.js",
     "build:css": "tailwindcss -c tailwind.config.js -i styles/tailwind.input.css -o ../public/assets/vendor/tailwind.build.css --minify && node ../tools/build-web-assets.js",
     "watch:css": "tailwindcss -c tailwind.config.js -i styles/tailwind.input.css -o ../public/assets/vendor/tailwind.build.css --watch",
-    "test:all": "npm run verify && npm test && npm run test:browser",
+    "test:all": "npm --prefix .. run build && npm run verify && npm test && npm run test:db && npm run test:browser",
     "verify": "node ../tools/verify.js",
     "verify:links": "node ../tools/verify-links.js",
     "verify:boundaries": "node ../tools/verify-boundaries.js",
