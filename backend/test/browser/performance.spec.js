@@ -1,13 +1,14 @@
 const { test, expect } = require('@playwright/test');
 const assets = require('../../../tools/web-assets-manifest.json');
 const images = require('../../../tools/local-image-manifest.json');
+const { routeCatalogue } = require('./catalogue-route');
 
 const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="120" height="90"><rect width="120" height="90" fill="#d4af37"/></svg>';
 async function catalogue(page) {
     await page.route('**/api/categories/public', route => route.fulfill({ json: [{ id: 10, name: 'Machinery', url_slug: 'machinery' }] }));
-    await page.route('**/api/products/public', route => route.fulfill({ json: [1, 2, 3].map(id => ({
+    await routeCatalogue(page, [1, 2, 3].map(id => ({
         id, name: 'Machine ' + id, category_id: 10, category_name: 'Machinery', image_url: '/perf-fixture/hero-' + id + '.svg'
-    })) }));
+    })));
 }
 
 test('Hero requests only the first image until it is ready, then one slide ahead', async ({ page }) => {

@@ -1,4 +1,5 @@
 const { test, expect } = require('@playwright/test');
+const { routeCatalogue } = require('./catalogue-route');
 const ORIGIN = 'https://storefront.example.test';
 
 test('Quotation combobox retains its label, required state and active-option relationship', async ({ page }) => {
@@ -44,7 +45,7 @@ test('Product cards expose real links, independent purchase controls and the exi
 });
 
 test('Only the current featured slide is interactive; indicators have 44px targets', async ({ page }) => {
-    await page.route('**/api/products/public', route => route.fulfill({ json: [1, 2, 3].map(id => ({ id, name: 'Featured ' + id, url_slug: 'featured-' + id, is_featured: true, category_id: 10, price: 'On request' })) }));
+    await routeCatalogue(page, [1, 2, 3].map(id => ({ id, name: 'Featured ' + id, url_slug: 'featured-' + id, is_featured: true, category_id: 10, price: 'On request' })));
     await page.goto('/store/store.html');
     const frames = page.locator('#featured-hero [data-hero-track] > article');
     await expect(frames).toHaveCount(5);
@@ -76,7 +77,7 @@ test('Mobile navigation is named, contains focus and restores background interac
 });
 
 test('Landing slideshow provides a working pause and play control', async ({ page }) => {
-    await page.route('**/api/products/public', route => route.fulfill({ json: [1, 2, 3].map(id => ({ id, name: 'Machine ' + id, category_id: 10, category_name: 'Machinery' })) }));
+    await routeCatalogue(page, [1, 2, 3].map(id => ({ id, name: 'Machine ' + id, category_id: 10, category_name: 'Machinery' })));
     await page.goto('/');
     // Icon-only: the accessible name lives in aria-label, not visible text.
     const control = page.locator('#machinery-hero-pause');

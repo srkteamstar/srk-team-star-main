@@ -1,4 +1,5 @@
 const { test, expect } = require('@playwright/test');
+const { routeCatalogue } = require('./catalogue-route');
 
 const pages = [
     '/', '/about.html', '/catalogue.html', '/contact.html',
@@ -85,7 +86,7 @@ for (const row of [
     { host: 'best-sellers-preview', policy: 'best-sellers', section: 'dynamic-bestsellers-wrapper', heading: 'Best Sellers' }
 ]) {
     test(`Store home ${row.heading} row shows four real products, and View All shows the rest`, async ({ page }) => {
-        await page.route('**/api/products/public', route => route.fulfill({ json: HOME_CATALOGUE }));
+        await routeCatalogue(page, HOME_CATALOGUE);
         await page.goto('/store/store.html', { waitUntil: 'domcontentloaded' });
 
         const host = '#' + row.host;
@@ -155,7 +156,7 @@ test('Landing hero keeps every Machinery product in the mobile gallery flow', as
         { id: 11, name: 'Mouldings', url_slug: 'mouldings', parent_id: null }
     ];
 
-    await page.route('**/api/products/public', route => route.fulfill({ json: products }));
+    await routeCatalogue(page, products);
     await page.route('**/api/categories/public', route => route.fulfill({ json: categories }));
     await page.setViewportSize({ width: 390, height: 844 });
 
@@ -193,7 +194,7 @@ test('Store featured slideshow keeps its carousel and wraps the image on mobile'
         { id: 3, name: 'Not Featured', is_featured: false, image_url: image('00ff00') }
     ];
 
-    await page.route('**/api/products/public', route => route.fulfill({ json: products }));
+    await routeCatalogue(page, products);
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto('/store/store.html', { waitUntil: 'domcontentloaded' });
 
