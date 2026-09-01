@@ -72,6 +72,25 @@ const failNextGatewayPaymentFetch = () => {
     write(state);
 };
 
+// F01's reproduction: the local order row is written first (durable), and
+// ONLY THEN does the server ask Razorpay for a gateway order to pay against.
+// This makes that second call fail once, the same shape a real outage or a
+// 5xx from Razorpay would take, so a test can drive checkout.controller.js's
+// "cancel the order it could not link a gateway order to" branch on demand.
+const failNextGatewayOrderCreate = () => {
+    const state = read();
+    state.failNextGatewayOrderCreate = true;
+    write(state);
+};
+
+const consumeGatewayOrderCreateFailure = () => {
+    const state = read();
+    if (!state.failNextGatewayOrderCreate) return false;
+    delete state.failNextGatewayOrderCreate;
+    write(state);
+    return true;
+};
+
 const consumeGatewayPaymentFetchFailure = () => {
     const state = read();
     if (!state.failNextGatewayPaymentFetch) return false;
@@ -108,5 +127,6 @@ module.exports = {
     failNextAtomicCheckout, consumeAtomicCheckoutFailure,
     failNextQuoteRpcMissing, consumeQuoteRpcMissing,
     failNextGatewayPaymentFetch, consumeGatewayPaymentFetchFailure,
+    failNextGatewayOrderCreate, consumeGatewayOrderCreateFailure,
     reset
 };

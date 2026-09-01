@@ -396,10 +396,48 @@
     const PENDING_KEY = 'srk_pending_payment';
     const DRAFT_KEY = 'srk_checkout_draft';
 
+    // S04 — the second, independent secret a GUEST retry has to hold
+    // alongside its idempotency key. Generated the same way, at the same
+    // time, and carried in the SAME draft object below, so it costs a
+    // genuine lost-response retry nothing and an attacker who only knows or
+    // guessed the idempotency key everything: the server refuses to hand
+    // back or rotate a guest order without it. See checkoutStrongToken()
+    // for what "generated the same way" means, and the header of
+    // POST /api/checkout for the server side of this.
+    let checkoutProof = null;
+
+    // THE DRAFT HAS AN OWNER (S03). The single sessionStorage key below used
+    // to be read back for whoever's checkout page loaded next in this tab,
+    // with nothing in it that said whose contact details, delivery address
+    // or retry key they actually were. A customer who signed out mid-tab —
+    // or simply the NEXT visitor on a shared machine that never closed the
+    // tab — inherited the previous customer's name, phone and address
+    // pre-filled into their own order, and could place it without ever
+    // typing them.
+    //
+    // draftOwner() answers "who is this browser checking out as, right now"
+    // — an account id when signed in, 'guest' otherwise — and every draft
+    // read below refuses one whose ownerId does not match. This is the
+    // check that closes the leak; it does not depend on anything else in
+    // this file remembering to run first.
+    function draftOwner() {
+        try {
+            const profile = account && typeof account.current === 'function' ? account.current() : null;
+            return (profile && profile.id !== undefined && profile.id !== null) ? String(profile.id) : 'guest';
+        } catch (error) {
+            return 'guest';
+        }
+    }
+
     function recallDraft() {
         try {
             const saved = JSON.parse(sessionStorage.getItem(DRAFT_KEY) || '{}');
-            return saved && typeof saved === 'object' ? saved : {};
+            if (!saved || typeof saved !== 'object') return {};
+            // An old draft with no ownerId at all (written before this
+            // check existed) is nobody's proven draft and is discarded the
+            // same as one that belonged to someone else — the safe default
+            // is "start fresh", never "assume it was mine".
+            return saved.ownerId === draftOwner() ? saved : {};
         } catch (error) {
             return {};
         }
@@ -429,9 +467,14 @@
             Object.entries(Object.assign({}, values.contact, values.address)).forEach(([key, value]) => {
                 if (typeof value === 'string' && value.trim() !== '') typed[key] = value;
             });
-            draft = Object.assign(typed, { paymentMode, paymentMethod, idempotencyKey });
+            // ownerId marks this draft as belonging to whoever is checking
+            // out right now (S03) — recallDraft() refuses it for anyone
+            // else. checkoutProof travels with it for the same reason
+            // idempotencyKey does: this IS the one place a guest's checkout
+            // session persists across a reload or a lost response.
+            draft = Object.assign(typed, { ownerId: draftOwner(), paymentMode, paymentMethod, idempotencyKey, checkoutProof });
         } else {
-            draft = Object.assign({}, draft, { paymentMode, paymentMethod, idempotencyKey });
+            draft = Object.assign({}, draft, { ownerId: draftOwner(), paymentMode, paymentMethod, idempotencyKey, checkoutProof });
         }
 
         try { sessionStorage.setItem(DRAFT_KEY, JSON.stringify(draft)); } catch (error) {}
@@ -444,6 +487,7 @@
         // cancelled) would carry the same idempotency key as a placed order
         // and could be folded into it by the server's dedup check.
         idempotencyKey = null;
+        checkoutProof = null;
         try { sessionStorage.removeItem(DRAFT_KEY); } catch (error) {}
     }
 
@@ -458,16 +502,26 @@
     // just closed instead of writing the new one they were looking at.
     function rotateIdempotencyKey() {
         idempotencyKey = null;
+        checkoutProof = null;
         draft = Object.assign({}, draft);
         delete draft.idempotencyKey;
+        delete draft.checkoutProof;
         try { sessionStorage.setItem(DRAFT_KEY, JSON.stringify(draft)); } catch (error) {}
     }
 
-    function randomIdempotencyKey() {
+    // A CRYPTOGRAPHICALLY RANDOM VALUE, OR NONE AT ALL (S04). This used to
+    // fall back to Date.now() plus Math.random() when crypto.randomUUID was
+    // unavailable — a value that is NOT hard to guess and, on the server,
+    // now also functions as a bearer credential for reading an order back.
+    // Failing safely here means checkout still works without one: the
+    // server-side idempotency/retry protection is simply not available for
+    // this session, which is a strictly better outcome than handing out a
+    // weak "secret" that looks like a strong one.
+    function randomStrongToken() {
         try {
             if (window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID();
         } catch (error) {}
-        return 'idem-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+        return null;
     }
 
     function rememberPending(handshake) {
@@ -990,7 +1044,14 @@
         return [
             '<div class="py-20 text-center max-w-xl mx-auto">',
             '    <div class="w-14 h-14 mx-auto mb-6 rounded-full bg-[#d4af37]/10 flex items-center justify-center text-[#d4af37]">' + PACKAGE_ICON + '</div>',
-            '    <h2 class="text-2xl font-bold tracking-tight mb-3">' + escapeHtml(title) + '</h2>',
+            // id + tabindex="-1": paint() below moves focus here whenever
+            // this markup is what it just rendered (X01) — a whole-screen
+            // task transition (order placed, cancelled, not found, an
+            // outage while checking one) needs its own heading announced,
+            // not silent focus left wherever the Place Order button used to
+            // be. -1 makes an <h2> focusable by script without adding it to
+            // the tab order.
+            '    <h2 id="checkout-notice-heading" tabindex="-1" class="text-2xl font-bold tracking-tight mb-3">' + escapeHtml(title) + '</h2>',
             '    <p class="text-sm text-[#1f271b]/60 mb-8 leading-relaxed max-w-md mx-auto">' + message + '</p>',
             '    <div id="checkout-actions">' + buttons.join('') + '</div>',
             '</div>'
@@ -1211,6 +1272,16 @@
     function paint(html) {
         root.innerHTML = html;
         enhance(root);
+
+        // X01 — a whole-screen transition moves focus to its own heading.
+        // Scoped to #checkout-notice-heading specifically (noticeHTML's own
+        // id) rather than "the first heading in whatever was painted": the
+        // checkout FORM also has headings (one per section) that paintCheckout()
+        // renders on every keystroke-driven re-render, and stealing focus on
+        // those would be a worse bug than the one this fixes.
+        const heading = root.querySelector('#checkout-notice-heading');
+        if (heading) heading.focus({ preventScroll: false });
+
         return root;
     }
 
@@ -1370,13 +1441,39 @@
         const token = (saved && saved.order_access_token) || undefined;
         const result = await fetchOrderStatus(wantedId, token);
 
-        // Reached the server and it definitively said no — 404 (not this
-        // browser's order, or gone) or 401 (no session and no token at all).
-        // Nothing left to fall back to.
+        // Reached the server, but it did not say yes. Two different
+        // failures used to be treated identically here (F02), and only one
+        // of them is conclusive:
+        //
+        //   404/401   definitively no — not this browser's order, gone, or
+        //             no session/token at all. Nothing left to fall back to,
+        //             so the pending recovery data really is retired.
+        //
+        //   anything else (429, 5xx, a proxy timeout) is the server or the
+        //   network having a bad moment, and says NOTHING about whether this
+        //   order exists or is still open. Wiping `saved` here — the OLD
+        //   behaviour — could permanently strand a guest mid-outage: the
+        //   plaintext access token is not recoverable once forgotten, so a
+        //   transient 503 used to be able to destroy the only way back to a
+        //   real, open, unpaid order.
         if (result.reached && !result.ok) {
-            rememberPending(null);
-            if (asked) return { done: true, screen: notFoundHTML() };
-            return { done: true };
+            if (result.status === 404 || result.status === 401) {
+                rememberPending(null);
+                if (asked) return { done: true, screen: notFoundHTML() };
+                return { done: true };
+            }
+
+            // Preserved, not retired — `saved` (and pendingPayment, already
+            // restored above) are left exactly as they were, and the retry
+            // button re-runs this same function rather than the customer
+            // having to rediscover the order some other way.
+            return {
+                done: true,
+                screen: failedHTML(
+                    'We could not check this order right now. Your order details are preserved — retry, or try again shortly.',
+                    { orderMayExist: true }
+                )
+            };
         }
 
         // Could not reach the server at all. The saved copy is a HINT about
@@ -1439,8 +1536,14 @@
         // one, and pricing the basket first would only paint a form over it.
         const resumed = await resumeIfPending();
         if (resumed && resumed.done) {
-            if (resumed.screen) paint(resumed.screen);
-            return;
+            if (resumed.screen) { paint(resumed.screen); return; }
+            // No screen (F02): an unasked-for resume that turned out to be
+            // nothing — an order this browser is no longer waiting on, with
+            // nothing to say about it. Fall through to the normal checkout
+            // form flow rather than leaving "Loading your order…" on screen
+            // forever, which is what a bare `return` here used to do despite
+            // this function's own contract (see the doc comment above
+            // resumeIfPending()) promising exactly this fall-through.
         }
 
         // The cart is not necessarily in hand yet. For a signed-in customer it
@@ -1480,7 +1583,12 @@
 
         if (draft.paymentMode === 'online' || draft.paymentMode === 'offline') paymentMode = draft.paymentMode;
         if (typeof draft.paymentMethod === 'string') paymentMethod = draft.paymentMethod;
-        idempotencyKey = (typeof draft.idempotencyKey === 'string' && draft.idempotencyKey) ? draft.idempotencyKey : randomIdempotencyKey();
+        idempotencyKey = (typeof draft.idempotencyKey === 'string' && draft.idempotencyKey) ? draft.idempotencyKey : randomStrongToken();
+        // Generated alongside the idempotency key, from the SAME draft (S03
+        // already guarantees `draft` is either this owner's own, or empty)
+        // and for the same reason: a guest retry has to prove it holds this
+        // independently of the key itself. See POST /api/checkout's header.
+        checkoutProof = (typeof draft.checkoutProof === 'string' && draft.checkoutProof) ? draft.checkoutProof : randomStrongToken();
 
         // `paymentMode` defaults to 'online' because that is the server's own
         // default for a body that omits it, and it is what most customers
@@ -1725,6 +1833,12 @@
         // not a second one. Stable for this checkout session (see start()),
         // and only ever regenerated after clearDraft() runs.
         body.idempotency_key = idempotencyKey;
+        // S04 — the second secret a guest retry needs, alongside the key
+        // itself, before the server will hand an existing order back or
+        // rotate its access token. Absent (null) is fine: the server then
+        // simply has nothing extra to check for a guest order that has no
+        // stored proof, the same graceful degrade idempotencyKey gets.
+        body.checkout_proof = checkoutProof;
 
         let response, payload;
         try {
@@ -1756,6 +1870,21 @@
                 return;
             }
 
+            // F01 — a retry landed on an order that is closed for good
+            // (cancelled, or a dead 'Pending Payment' nothing can settle).
+            // This is the exact 502 -> retry -> 200 the audit reproduced:
+            // the OLD code had nothing here and fell straight through to
+            // showBanner(), leaving the customer on a form that still
+            // thought Place Order might work. Preserve the basket — nothing
+            // usable exists to pay for — and start the NEXT attempt with a
+            // fresh key so it cannot be folded back into the dead one.
+            if (response.status === 409 && payload && payload.checkout_state === 'failed') {
+                rememberPending(null);
+                rotateIdempotencyKey();
+                paint(cancelledHTML(payload.reference));
+                return;
+            }
+
             const field = payload && payload.field ? document.getElementById('checkout-' + fieldAlias(payload.field)) : null;
             if (field) {
                 fieldError(field, payload.error);
@@ -1767,15 +1896,40 @@
             return;
         }
 
-        // THE ORDER NOW EXISTS. What it does not yet have, under the gateway
-        // flow, is money against it — so this is the one place the two flows
-        // genuinely diverge.
-        //
+        // THE ORDER'S LIFECYCLE, NAMED EXPLICITLY BY THE SERVER (F01) — never
+        // inferred from the mere shape of the response. `payload.payment`
+        // being present/absent used to be the only signal, and a Cancelled
+        // order's idempotent-retry response has EXACTLY the same shape as a
+        // genuinely placed one: no payment, 200 OK. checkout_state is what
+        // tells them apart.
+        const state = payload && payload.checkout_state;
+
+        if (state === 'failed') {
+            // Reached with a 2xx status in principle (a defensive fallback;
+            // the server answers this case with 409 above), but the rule is
+            // the same either way: never show confirmation for a dead order.
+            rememberPending(null);
+            rotateIdempotencyKey();
+            paint(cancelledHTML(payload && payload.reference));
+            return;
+        }
+
+        if (state === 'payment_review') {
+            // Money was captured, but this order raced a cancellation. Not
+            // placedHTML(): that copy tells the customer to expect the
+            // ordinary next steps, and this is not that.
+            closePaymentWindow(paymentWindow);
+            paint(paymentReviewHTML(payload));
+            try { cart.clear(); } catch (error) { console.error('Cart cleanup failed after order placed.', error); }
+            try { clearDraft(); } catch (error) {}
+            return;
+        }
+
         // Offline: the order is complete as far as this page is concerned.
         // Gateway: `payment` is the handshake, and the order sits in
         // 'Pending Payment' until the SERVER confirms a real capture. The cart
         // stays exactly where it is until then.
-        if (payload && payload.payment) {
+        if (state === 'awaiting_payment' || (!state && payload && payload.payment)) {
             // The contact AND address blocks are snapshotted here, not read at
             // open time. By the time Pay now is pressed on the awaiting screen
             // the form has been repainted away, and readForm() would hand back
@@ -2260,6 +2414,36 @@
             refreshSubmitButton();
         }
     });
+
+    // S03 — clear the outgoing owner's draft once the session module
+    // confirms an account change, using the same public hook cart-module.js
+    // already subscribes to for the identical reason (a cart/draft must not
+    // carry across an account boundary). Not a new event: account.subscribe()
+    // is customer-session-module.js's existing notification point, fired
+    // whenever it decides the signed-in customer changed — a sign-out among
+    // them. This module does not own that decision and is not changing it;
+    // it only reacts once the decision has been made.
+    //
+    // Scoped to clearing ONLY a draft that was actually the OUTGOING owner's
+    // — recallDraft()'s ownerId check is what actually stops the leak this
+    // finding is about (a mismatched draft is refused on read regardless of
+    // whether this ever fires), so this is a courtesy cleanup on top of that
+    // guarantee, not a substitute for it. A guest's own draft/recovery data
+    // is never touched here: draftOwner() only changes on an ACCOUNT
+    // transition, never merely because a guest is still a guest.
+    if (account && typeof account.subscribe === 'function') {
+        let knownDraftOwner = draftOwner();
+        account.subscribe(() => {
+            const nextOwner = draftOwner();
+            if (knownDraftOwner !== 'guest' && knownDraftOwner !== nextOwner) {
+                try {
+                    const saved = JSON.parse(sessionStorage.getItem(DRAFT_KEY) || '{}');
+                    if (saved && saved.ownerId === knownDraftOwner) sessionStorage.removeItem(DRAFT_KEY);
+                } catch (error) {}
+            }
+            knownDraftOwner = nextOwner;
+        });
+    }
 
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
     else start();

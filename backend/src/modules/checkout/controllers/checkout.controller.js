@@ -21,12 +21,25 @@
  * creates neither an account nor a session. A random per-order access token is
  * returned to that browser so the guest can read the invoice or cancel an
  * unpaid order without making those records public.
+ *
+ * THE IDEMPOTENT-RETRY PATH IS NOW SEPARATE FROM PRICING, AND THAT ORDER IS
+ * ALSO LOAD-BEARING (migration 037, audit findings S04/F08/F01). A caller
+ * that already holds a valid idempotency key is answered from the existing
+ * order's own FROZEN totals, before the current catalogue is ever consulted
+ * — so a price or stock change between attempts cannot block recovering an
+ * order that already exists, and a changed request cannot be quietly billed
+ * at a different amount than what was actually written. Reaching that
+ * existing order additionally requires proving the caller is who created it:
+ * the authenticated session for an account order, or a second server-issued
+ * secret (checkout_proof_hash) for a guest order — the idempotency key alone
+ * is a retry identifier, not a bearer credential for somebody else's order.
  */
+const crypto = require('crypto');
 const express = require('express');
 const { supabase } = require('../../../core/database/supabase');
 const razorpay = require('../../../core/gateways/razorpay');
 const { PAYMENTS_ENABLED } = require('../../../core/config/payments');
-const { GST_RATE } = require('../../../core/config/commercial');
+const { GST_RATE, SHIPPING_FREE_ABOVE, SHIPPING_COLLECT_ON_DELIVERY } = require('../../../core/config/commercial');
 const { sessionScope, sessionProfile, isBlocked, BLOCKED_MESSAGE, roleNameById } = require('../../../core/security/guards');
 const { EMAIL_PATTERN, MAX_LENGTHS, tooLong, trimmed } = require('../../../shared/validation');
 const { CURRENCY, PAYMENT_STATUS, PAYMENT_METHODS, PAYMENT_MODES } = require('../../../shared/contracts/payment');
@@ -34,7 +47,7 @@ const { SELLER } = require('../../../shared/contracts/seller');
 const { gstTreatment } = require('../../../shared/indian-gst');
 const { ORDER_STATUS_AWAITING_PAYMENT, ORDER_STATUS_PLACED } = require('../../../shared/contracts/order-status');
 const { orderReference } = require('../../../shared/contracts/order-reference');
-const { createOrderAccessToken } = require('../../../shared/order-access-token');
+const { createOrderAccessToken, isStrongRetryToken, hashCheckoutProof } = require('../../../shared/order-access-token');
 const {
     normalizePhone,
     normalizeEmail,
@@ -43,6 +56,112 @@ const {
 } = require('../../auth/auth.public');
 const { priceCheckout } = require('../services/price-checkout.service');
 const { summaryLimiter, checkoutLimiter } = require('../infrastructure/checkout-rate-limit');
+
+// ---- Idempotent-retry helpers ----------------------------------------------
+
+// A deterministic snapshot of "what quantity of what products", collapsed and
+// sorted the same way regardless of the order the browser happened to list
+// them in — so re-sending an identical basket in a different array order
+// cannot read as a changed request, but a genuine change (a quantity edited,
+// a line added or removed) always does.
+function normalizedFingerprintItems(rawItems) {
+    const wanted = new Map();
+
+    (Array.isArray(rawItems) ? rawItems : []).forEach(item => {
+        const rawId = item && (item.product_id !== undefined ? item.product_id : item.id);
+        const numericId = Number(rawId);
+        if (!Number.isFinite(numericId)) return;
+        const id = String(numericId);
+
+        const quantity = Number.parseInt(item && item.quantity, 10);
+        const qty = Number.isFinite(quantity) && quantity > 0 ? quantity : 0;
+
+        wanted.set(id, (wanted.get(id) || 0) + qty);
+    });
+
+    return [...wanted.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+}
+
+// F08's fingerprint. Bound to WHO is checking out (an account id, or 'guest'
+// plus the contact typed in) as well as WHAT is being ordered, so neither an
+// account switch nor a rewritten contact block can silently reuse a frozen
+// order meant for somebody else.
+function computeCheckoutFingerprint(input) {
+    const payload = {
+        v: 1,
+        owner: input.profile ? String(input.profile.id) : 'guest',
+        items: normalizedFingerprintItems(input.items),
+        address_line: input.addressLine,
+        city: input.city,
+        state: input.state,
+        postal_code: input.postal,
+        country: input.country,
+        payment_mode: input.paymentMode,
+        payment_method: input.paymentMethod || null
+    };
+
+    if (!input.profile) {
+        payload.buyer_name = input.buyer.name;
+        payload.buyer_email = input.buyer.email;
+        payload.buyer_phone = input.buyer.phone;
+        payload.buyer_company = input.buyer.company;
+    }
+
+    return crypto.createHash('sha256').update(JSON.stringify(payload), 'utf8').digest('hex');
+}
+
+// F08's frozen answer to "what does this order cost" — the same shape
+// priceCheckout() returns (so the client's rendering code does not need to
+// branch on which path produced it), but read entirely off the order row
+// this server already wrote rather than recomputed against the current
+// catalogue. shipping_is_free/shipping_due_on_delivery/shipping_free_above
+// are display-only derivations of the frozen subtotal against the CURRENT
+// policy constant — safe to compute fresh because they never change what is
+// charged, only how the confirmation explains it.
+function frozenTotalsFor(order) {
+    const subtotal = Number(order.amount);
+    const shippingIsFree = subtotal > 0 && subtotal >= SHIPPING_FREE_ABOVE;
+    const shippingDueOnDelivery = subtotal > 0 && !shippingIsFree && SHIPPING_COLLECT_ON_DELIVERY;
+
+    return {
+        subtotal,
+        shipping: Number(order.shipping_amount),
+        shipping_is_free: shippingIsFree,
+        shipping_due_on_delivery: shippingDueOnDelivery,
+        shipping_free_above: SHIPPING_FREE_ABOVE,
+        gst_rate: order.tax_rate === null || order.tax_rate === undefined ? GST_RATE : Number(order.tax_rate),
+        tax: Number(order.tax_amount),
+        total: Number(order.net_amount)
+    };
+}
+
+// F01's explicit lifecycle. The browser used to infer "placed" from nothing
+// more than the ABSENCE of a payment handshake in a 200/201 body — which is
+// also exactly what a Cancelled order (setup failed, or closed some other
+// way) looks like on the wire. Naming the state removes the ambiguity: the
+// client only shows confirmation for 'placed' or 'payment_review', and a
+// retry against anything else is told plainly that this attempt is closed.
+function checkoutStateFor(order, paymentRow) {
+    if (order.status === 'Cancelled') return 'failed';
+    if (order.status === 'Payment Review') return 'payment_review';
+
+    if (order.status === ORDER_STATUS_AWAITING_PAYMENT) {
+        const stillPayable = Boolean(
+            paymentRow && paymentRow.gateway === 'razorpay' &&
+            paymentRow.status !== PAYMENT_STATUS.paid && paymentRow.gateway_order_id
+        );
+        // Awaiting payment with nothing left that can pay it (the gateway was
+        // switched off after this order was placed, or the payment row never
+        // got a gateway order id) is a dead end exactly like Cancelled — the
+        // client must not treat it as a working handshake.
+        return stillPayable ? 'awaiting_payment' : 'failed';
+    }
+
+    // Processing / Shipped / Delivered: an offline order placed outright, or
+    // an online order whose capture has since settled (the webhook, most
+    // likely, while nobody was watching this tab).
+    return 'placed';
+}
 
 /** @returns {import('express').Router} */
 function checkoutController() {
@@ -153,24 +272,7 @@ function checkoutController() {
         if (addressLengthError) return res.status(400).json({ error: addressLengthError });
 
         try {
-            // ---- 1. Price it. Before anything is written, and from the database.
-            const priced = await priceCheckout(body.items);
-            if (!priced.ok) return res.status(400).json({ error: priced.error });
-
-            // A blocked line is not something to quietly drop: the customer is
-            // looking at a total that includes it. Refuse the whole order and name
-            // the lines, so the page can strike them out and re-price.
-            if (priced.blocked.length) {
-                return res.status(409).json({
-                    error: "Some items can no longer be ordered online.",
-                    blocked: priced.blocked
-                });
-            }
-            if (!priced.lines.length) {
-                return res.status(400).json({ error: "There is nothing priced in your cart to order." });
-            }
-
-            // ---- 2. Who is this for?
+            // ---- 1. Who is this for?
             //
             // A signed-in session wins outright over anything in the body. Trusting
             // a posted email here would let anyone file an order — and an address —
@@ -188,6 +290,12 @@ function checkoutController() {
             // correct and is not a way in: the adoption guard below refuses a
             // non-customer profile, so typing that account's own email is
             // answered, not obeyed.
+            //
+            // Resolved BEFORE the idempotency lookup below (moved up from
+            // where it used to sit, after pricing) because both the retry
+            // path and the fresh-order path need to know who this is for —
+            // and the retry path must never have to price the current
+            // catalogue just to find out. See the header and F08.
             let profile = sessionScope(req) !== 'customer' ? null : await sessionProfile(req);
 
             if (profile && await roleNameById(profile.role_id) !== 'customer') {
@@ -235,8 +343,9 @@ function checkoutController() {
                 };
             }
 
-            // ---- A LOST RESPONSE FOLLOWED BY A RETRY MUST LAND ON THIS SAME
-            // ORDER, not a second one written for the same basket.
+            // ---- 2. A LOST RESPONSE FOLLOWED BY A RETRY MUST LAND ON THIS SAME
+            // ORDER, not a second one written for the same basket — recovered
+            // here, BEFORE the current catalogue is ever priced (F08).
             //
             // The browser generates one key for the life of one checkout
             // session (checkout-module.js's start()/onPlaceOrder()) and sends
@@ -249,33 +358,110 @@ function checkoutController() {
             // check is what makes the common case — a genuinely lost
             // response, then an ordinary retry — return cleanly instead of a
             // second order or a bare 409.
-            // Bounded rather than rejected: a malformed or oversized value is
-            // not user-facing data worth failing an order over, so it is
-            // simply treated as absent — the checkout proceeds exactly as it
-            // would with no key at all, just without the retry protection.
+            //
+            // NOT ANY STRING UP TO 100 CHARACTERS ANY MORE (S04). A retry key
+            // that also functions as the credential for reading someone
+            // else's order back has to be as hard to guess as the order
+            // access token already is — so it must look like what
+            // crypto.randomUUID() actually produces. Anything else is treated
+            // as though no key were sent at all: the checkout proceeds
+            // exactly as it would with none, just without retry protection.
             const rawIdempotencyKey = trimmed(body.idempotency_key);
-            const idempotencyKey = (rawIdempotencyKey && rawIdempotencyKey.length <= 100) ? rawIdempotencyKey : null;
+            const idempotencyKey = isStrongRetryToken(rawIdempotencyKey) ? rawIdempotencyKey : null;
+
+            // The second, independent secret a GUEST retry has to prove it
+            // holds before an existing order is handed back or its access
+            // token rotated (S04). Hashed the same way the order access token
+            // itself is; only ever compared, never logged.
+            const rawCheckoutProof = trimmed(body.checkout_proof);
+            const checkoutProofHash = idempotencyKey ? hashCheckoutProof(rawCheckoutProof) : null;
+
+            // Computed unconditionally alongside the key so a NEW order (step
+            // 5 below) can store it, and an EXISTING one can be checked
+            // against it, from the exact same function.
+            const fingerprint = idempotencyKey ? computeCheckoutFingerprint({
+                profile, buyer,
+                items: body.items,
+                addressLine, city, state, postal, country,
+                paymentMode: requestedMode,
+                paymentMethod: trimmed(body.payment_method)
+            }) : null;
+
             if (idempotencyKey) {
                 const existing = await supabase.from('orders').select('*').eq('idempotency_key', idempotencyKey).maybeSingle();
                 if (existing.error) throw existing.error;
 
                 if (existing.data) {
                     let order = existing.data;
+
+                    // ---- Ownership (S04) — BEFORE anything about this order
+                    // is returned or changed.
+                    if (order.user_id != null) {
+                        // An account order belongs to the session that placed
+                        // it. Knowing the retry key is not enough — the
+                        // response for a signed-out browser, or one signed in
+                        // as somebody else, is identical to "no such order".
+                        if (!profile || String(profile.id) !== String(order.user_id)) {
+                            return res.status(404).json({ error: "Order not found." });
+                        }
+                    } else if (order.checkout_proof_hash) {
+                        // A guest order that minted a proof at creation
+                        // (every order created after migration 037) requires
+                        // it to match. A historical order with no stored
+                        // proof (checkout_proof_hash null) falls through to
+                        // the pre-existing behaviour instead — the
+                        // idempotency key alone is what it always relied on,
+                        // and there is nothing newer to compare against.
+                        if (!checkoutProofHash || checkoutProofHash !== order.checkout_proof_hash) {
+                            return res.status(404).json({ error: "Order not found." });
+                        }
+                    }
+
+                    // ---- Changed-reuse (F08) — a request that no longer
+                    // describes this order must not recover it. A null
+                    // request_fingerprint (an order created before migration
+                    // 037) is explicitly treated as nothing to compare,
+                    // never as a mismatch.
+                    if (order.request_fingerprint && order.request_fingerprint !== fingerprint) {
+                        return res.status(409).json({
+                            error: "This looks like a different order than the one that key was for. Start a new checkout for these changes."
+                        });
+                    }
+
                     const { data: paymentRows, error: paymentsError } = await supabase
                         .from('payments').select('*').eq('order_id', order.id)
                         .order('created_at', { ascending: false }).limit(1);
                     if (paymentsError) throw paymentsError;
                     const paymentRow = (paymentRows || [])[0] || null;
 
-                    // A GUEST'S PLAINTEXT ACCESS TOKEN IS NEVER STORED — only its
-                    // hash is (see createOrderAccessToken()) — so if the first
-                    // response genuinely never reached this browser, the token it
-                    // carried is gone for good, not merely unread. This retry is
-                    // the one safe place to repair that: it has already proven it
-                    // holds the idempotency key from the original request, which
-                    // is no less a secret than that request was, so minting a
-                    // fresh token and rotating the stored hash to match costs
-                    // nothing a genuine attacker didn't already need.
+                    const state = checkoutStateFor(order, paymentRow);
+
+                    // ---- Lifecycle (F01) — a retry must never be able to
+                    // read as confirmation for an order that cannot be
+                    // fulfilled. This is the exact 502-then-retry-200 the
+                    // audit reproduced: gateway setup failed, the order was
+                    // cancelled, and the OLD code fell straight through to
+                    // the same 200 response a genuinely open order gets.
+                    if (state === 'failed') {
+                        return res.status(409).json({
+                            error: "This payment attempt was closed. Nothing was charged — your basket is unchanged and you can start again.",
+                            checkout_state: 'failed',
+                            order_id: order.id,
+                            reference: orderReference(order)
+                        });
+                    }
+
+                    // A GUEST'S PLAINTEXT ACCESS TOKEN IS NEVER STORED — only
+                    // its hash is (see createOrderAccessToken()) — so if the
+                    // first response genuinely never reached this browser,
+                    // the token it carried is gone for good, not merely
+                    // unread. Reaching this line has already cleared the
+                    // ownership check above — proof of the checkout_proof
+                    // secret for a guest order, or nothing to prove for a
+                    // historical one — so minting a fresh token and rotating
+                    // the stored hash to match costs nothing a genuine
+                    // attacker didn't already need, and no longer runs for
+                    // someone who merely knew or guessed the retry key.
                     let guestAccessToken;
                     if (!order.user_id) {
                         const guestAccess = createOrderAccessToken();
@@ -290,22 +476,16 @@ function checkoutController() {
                     return res.status(200).json({
                         reference: orderReference(order),
                         order_id: order.id,
-                        totals: priced.totals,
+                        checkout_state: state,
+                        // F08 — the order's OWN frozen totals, never
+                        // re-priced against the current catalogue. A retry
+                        // whose body changed the basket is caught by the
+                        // fingerprint check above, long before this point.
+                        totals: frozenTotalsFor(order),
                         order_access_token: guestAccessToken,
                         customer: profile ? await publicProfile(profile) : null,
-                        // Same rule orderStatusView() enforces for GET /api/orders/:id/status —
-                        // repeated here rather than shared because this route returns 200/201
-                        // shapes the other does not. A retry that lands after the order was
-                        // paid or cancelled must not hand back a working-looking handshake:
-                        // that reopens the Razorpay modal against an order that can never be
-                        // legitimately captured again, and a capture against it lands in
-                        // Payment Review needing manual reconciliation instead of just failing
-                        // to open.
                         payment: (
-                            order.status === ORDER_STATUS_AWAITING_PAYMENT &&
-                            paymentRow && paymentRow.gateway === 'razorpay' &&
-                            paymentRow.status !== PAYMENT_STATUS.paid &&
-                            paymentRow.gateway_order_id
+                            state === 'awaiting_payment' && paymentRow
                         ) ? {
                             key_id: razorpay.publicKeyId(),
                             gateway_order_id: paymentRow.gateway_order_id,
@@ -316,7 +496,26 @@ function checkoutController() {
                 }
             }
 
-            // ---- 3. Keep the saved address current.
+            // ---- 3. Price it. No existing attempt was found (or none was
+            // named), so this is either a first attempt or a retry key that
+            // never got as far as an order. From the database, not the body.
+            const priced = await priceCheckout(body.items);
+            if (!priced.ok) return res.status(400).json({ error: priced.error });
+
+            // A blocked line is not something to quietly drop: the customer is
+            // looking at a total that includes it. Refuse the whole order and name
+            // the lines, so the page can strike them out and re-price.
+            if (priced.blocked.length) {
+                return res.status(409).json({
+                    error: "Some items can no longer be ordered online.",
+                    blocked: priced.blocked
+                });
+            }
+            if (!priced.lines.length) {
+                return res.status(400).json({ error: "There is nothing priced in your cart to order." });
+            }
+
+            // ---- 4. Keep the saved address current.
             //
             // Best-effort on purpose. The order's own frozen copy is written below
             // and is what a parcel follows; failing to update the customer's
@@ -343,7 +542,7 @@ function checkoutController() {
                 }
             }
 
-            // ---- 4. Write the complete order atomically.
+            // ---- 5. Write the complete order atomically.
             // Migration 025 owns the database transaction. If any item, address or
             // payment insert fails, PostgreSQL rolls the header back as well.
             const paymentMethod = PAYMENT_METHODS.includes(trimmed(body.payment_method))
@@ -360,6 +559,14 @@ function checkoutController() {
                 p_order: {
                     guest_access_token_hash: guestAccess ? guestAccess.hash : null,
                     idempotency_key: idempotencyKey || null,
+                    // Guest-only (S04): null for an account order, since the
+                    // session itself is that proof. Written even when no
+                    // idempotency key was sent — a client old enough to omit
+                    // one still gets a proof-guarded row if it happens to
+                    // send checkout_proof, and gets exactly nothing extra
+                    // (both columns null) if it sends neither.
+                    checkout_proof_hash: (!profile && idempotencyKey) ? checkoutProofHash : null,
+                    request_fingerprint: fingerprint || null,
                     amount: priced.totals.subtotal,
                     shipping_amount: priced.totals.shipping,
                     tax_amount: priced.totals.tax,
@@ -408,7 +615,7 @@ function checkoutController() {
 
             const reference = orderReference(order);
 
-            // ---- 5. Ask Razorpay for an order to pay against.
+            // ---- 6. Ask Razorpay for an order to pay against.
             //
             // Last, deliberately. Everything above is durable, so the amount sent
             // here is read back off the row this server just wrote rather than
@@ -455,13 +662,19 @@ function checkoutController() {
                     // The order exists but cannot be paid for. Cancelling it is
                     // the honest outcome: leaving a 'Pending Payment' row that no
                     // customer can ever complete is an order that looks live on
-                    // every report and is not.
+                    // every report and is not. Its idempotency key is left in
+                    // place on purpose (F01) — a retry against it now runs into
+                    // checkoutStateFor() returning 'failed' above and is refused
+                    // with 409, rather than the key going stale and a SECOND
+                    // order being written for the same basket.
                     console.error("Razorpay order creation failed — cancelling order", order.id, gatewayError);
                     await supabase.from('orders').update({ status: 'Cancelled' }).eq('id', order.id);
                     await supabase.from('payments').update({ status: PAYMENT_STATUS.failed }).eq('id', paymentRow.id);
 
                     return res.status(502).json({
-                        error: "We could not reach the payment provider, so your order was not placed. Nothing has been charged — please try again."
+                        error: "We could not reach the payment provider, so your order was not placed. Nothing has been charged — please try again.",
+                        checkout_state: 'failed',
+                        order_id: order.id
                     });
                 }
             }
@@ -469,6 +682,10 @@ function checkoutController() {
             res.status(201).json({
                 reference: reference,
                 order_id: order.id,
+                // F01 — named explicitly rather than left for the client to
+                // infer from whether `payment` happens to be present, which
+                // is the same shape a dead order's response has.
+                checkout_state: payOnline ? 'awaiting_payment' : 'placed',
                 totals: priced.totals,
                 order_access_token: guestAccess ? guestAccess.token : undefined,
                 customer: profile ? await publicProfile(profile) : null,

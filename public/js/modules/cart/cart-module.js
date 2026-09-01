@@ -230,6 +230,24 @@
     // what makes `ownerId` non-null mean "safe to write to the server".
     let ownerId = null;
 
+    // BUMPED EVERY TIME `ownerId` CHANGES MEANING (F06) — a sign-in, a
+    // sign-out, or a switch from one customer to another. A queued write
+    // captures both `ownerId` and this epoch at the moment it is QUEUED
+    // (persist()/enqueueSave() below); if either has moved on by the time
+    // its turn to actually run arrives, the write is dropped rather than
+    // sent — the one case `ownerId !== owner` alone could not catch is the
+    // SAME id becoming current again (a quick sign-out/sign-in as the same
+    // person), and this closes that gap too.
+    let ownerEpoch = 0;
+
+    // The last cart revision this browser has actually SEEN — from a GET, or
+    // from what a PUT just echoed back (migration 036's replace_customer_cart).
+    // Carried on the next write as `revision` so the server can tell a write
+    // that started from THIS state apart from one that started stale; null
+    // until the first successful read/write, which the RPC treats as "nothing
+    // to compare", the same unconditional write this route always allowed.
+    let knownRevision = null;
+
     // Whether the question "whose cart is this" has been answered yet — which
     // is not the same as answered *well*. A read that failed still settles it:
     // the lines fall back to being a guest cart, which is honest, and the
@@ -327,9 +345,31 @@
 
         if (!parsed || parsed.v !== STORAGE_VERSION || !Array.isArray(parsed.items)) return [];
 
-        return parsed.items
-            .map(normalise)
-            .filter(Boolean);
+        return dedupeLines(parsed.items.map(normalise).filter(Boolean));
+    }
+
+    // A cart written by an OLDER copy of this file could hold two rows for
+    // one product id — add()'s existing-line check used to run before its
+    // one await rather than after, so two overlapping "add to cart" clicks
+    // on a brand-new product could each decide there was no existing line
+    // and both push one (F07). Collapsed here, on the way IN, rather than
+    // trusted: each row was a genuine add, so the quantities are combined
+    // (capped, same as any other add) rather than one being discarded.
+    function dedupeLines(list) {
+        const byId = new Map();
+        const order = [];
+
+        list.forEach(line => {
+            const existing = byId.get(line.id);
+            if (existing) {
+                existing.quantity = clampQuantity(existing.quantity + line.quantity) || existing.quantity;
+            } else {
+                byId.set(line.id, line);
+                order.push(line.id);
+            }
+        });
+
+        return order.map(id => byId.get(id));
     }
 
     // ------------------------------------------------------------------
@@ -364,37 +404,105 @@
 
         if (!payload || !Array.isArray(payload.items)) return null;
 
-        return payload.items.map(normalise).filter(Boolean);
+        if (typeof payload.revision === 'number') knownRevision = payload.revision;
+
+        return dedupeLines(payload.items.map(normalise).filter(Boolean));
     }
 
     // Every PUT carries the complete cart, which is what makes a failed one
     // cheap: nothing is queued for retry and nothing needs to be, because the
     // next write that lands says everything this one would have.
-    async function serverWrite(items, keepalive) {
+    //
+    // THROWS RATHER THAN SWALLOWING (F06) — this used to console.warn and
+    // return, so a save that failed left the customer with no idea their
+    // cart was not what the server held, and nothing upstream could react.
+    // The caller (enqueueSave() below) is what turns a thrown error into a
+    // visible cartSaveErrorMessage.
+    async function serverWriteOrThrow(items, keepalive) {
+        let response;
         try {
-            const response = await fetch('/api/cart', {
+            response = await fetch('/api/cart', {
                 method: 'PUT',
                 credentials: 'include',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ items: items }),
+                body: JSON.stringify({
+                    items: items,
+                    // F06 — the revision this write is based on. The server
+                    // (migration 036's replace_customer_cart) refuses a
+                    // stale one with 409 instead of silently applying it
+                    // over a write that landed after this browser last read.
+                    revision: knownRevision
+                }),
                 // Set only on the pagehide flush. A keepalive request survives
                 // the document being torn down, which is the entire point
                 // there and pointless overhead everywhere else.
                 keepalive: keepalive === true
             });
-
-            if (!response.ok) {
-                console.warn('Cart: the server refused a cart update (' + response.status + ').');
-            }
         } catch (error) {
-            console.warn('Cart: could not save your cart to the server.', error);
+            throw new Error('Could not reach the server to save your cart.');
         }
+
+        if (response.status === 409) {
+            // Another tab or device (or a write this one lost track of) won
+            // the race — re-read the server's own state rather than either
+            // silently discarding this write or blindly retrying it, which
+            // could loop forever against a revision that keeps moving.
+            let conflictBody = null;
+            try { conflictBody = await response.json(); } catch (error) {}
+            if (conflictBody && typeof conflictBody.revision === 'number') knownRevision = conflictBody.revision;
+
+            const fresh = await serverRead();
+            if (fresh !== null && ownerId) {
+                lines = fresh;
+                notify();
+            }
+            throw new Error('Your cart changed in another tab or device — it has been refreshed to match.');
+        }
+
+        if (!response.ok) {
+            throw new Error('The server refused a cart update (' + response.status + ').');
+        }
+
+        let payload = null;
+        try { payload = await response.json(); } catch (error) {}
+        if (payload && typeof payload.revision === 'number') knownRevision = payload.revision;
     }
 
     // ------------------------------------------------------------------
     // PERSISTENCE — WHICHEVER ONE OWNS THIS CART
     // ------------------------------------------------------------------
     let writeTimer = null;
+
+    // ONE ORDERED CHAIN OF SERVER WRITES (F06), NOT A NEW REQUEST PER CALL.
+    // persist({ immediate: true }) (clear(), the post-sign-in adopt()) used
+    // to fire its request straight away, so it could still be in flight when
+    // a DEBOUNCED write from a moment earlier landed — two PUTs for the same
+    // customer racing at the network, with no guarantee the responses came
+    // back in the order the writes were meant to apply in. Every write, of
+    // either kind, now goes through enqueueSave(): queued onto `tail`, which
+    // only ever runs one at a time, in the order they were queued.
+    let writeTail = Promise.resolve();
+    let lastSave = Promise.resolve();
+
+    function enqueueSave(items, owner, epoch, keepalive) {
+        lastSave = writeTail.then(() => {
+            // The identity/epoch this write was queued FOR may no longer be
+            // current by the time its turn comes up — a sign-out, a switch
+            // to a different account, mid-queue. Sending it anyway would be
+            // exactly the "old basket under a new session" bug this guards
+            // against, so it is silently dropped rather than sent.
+            if (owner !== ownerId || epoch !== ownerEpoch) return;
+            return serverWriteOrThrow(items, keepalive).then(() => { clearCartSaveError(); });
+        });
+
+        // The NEXT write is queued behind this one resolving OR rejecting —
+        // a failed save must not jam every write after it forever.
+        writeTail = lastSave.catch(() => {});
+        // Reported once, here, regardless of how many callers are holding a
+        // reference to this same promise.
+        lastSave.catch(showCartSaveError);
+        return lastSave;
+    }
 
     // `immediate` is for the writes where a debounce is a real risk of loss
     // rather than a saving: clear(), which checkout calls the moment an order
@@ -416,31 +524,36 @@
         }
 
         if (options && options.immediate) {
-            serverWrite(snapshot());
+            enqueueSave(snapshot(), ownerId, ownerEpoch);
             return;
         }
 
         const owner = ownerId;
+        const epoch = ownerEpoch;
         writeTimer = window.setTimeout(() => {
             writeTimer = null;
-            // The session may have changed while this was pending, in which
-            // case these lines belong to somebody who is no longer here.
-            if (ownerId !== owner) return;
-            serverWrite(snapshot());
+            enqueueSave(snapshot(), owner, epoch);
         }, WRITE_DEBOUNCE_MS);
     }
 
-    // Fired when the page is going away with a debounced write still pending —
-    // clicking through to checkout inside the debounce window is the ordinary
-    // way that happens. keepalive is what lets the request outlive the document.
+    // Fired when the page is going away with a debounced write still pending
+    // — clicking through to checkout inside the debounce window is the
+    // ordinary way that happens — and now ALSO awaited directly by anything
+    // that needs the cart durably saved before it navigates (F06): the
+    // "Proceed to Checkout" link and the header cart's own Buy Now handler
+    // both await this before leaving the page, so checkout can never read an
+    // older basket than what is on screen. Waits for the WHOLE chain, not
+    // only the debounce timer — an immediate write queued moments earlier
+    // (adopt(), clear()) could otherwise still be in flight when this
+    // resolves.
     function flushPendingWrite() {
-        if (writeTimer === null) return Promise.resolve();
+        if (writeTimer !== null) {
+            window.clearTimeout(writeTimer);
+            writeTimer = null;
+            if (ownerId) enqueueSave(snapshot(), ownerId, ownerEpoch);
+        }
 
-        window.clearTimeout(writeTimer);
-        writeTimer = null;
-
-        if (ownerId) return serverWrite(snapshot(), true);
-        return Promise.resolve();
+        return lastSave.catch(() => {});
     }
 
     const snapshot = () => lines.map(line => Object.assign({}, line));
@@ -544,6 +657,19 @@
             // than a second copy of this logic.
             if (nextOwner === ownerId && settled) return;
 
+            // ANY REAL TRANSITION BUMPS THE EPOCH (F06) — sign-out, sign-in,
+            // or a switch to a different account. A write already queued
+            // (persist()'s debounce timer, or an in-flight enqueueSave()
+            // from a moment ago) captured the OLD ownerId/epoch pair when it
+            // was made; enqueueSave() checks both against the current values
+            // before it actually sends anything, so a write that was true
+            // when queued but is stale by the time its turn comes up is
+            // dropped rather than sent under whoever is here now. `ownerId`
+            // alone already caught a switch between two DIFFERENT accounts;
+            // this also catches a quick sign-out/sign-in as the SAME one,
+            // which `ownerId` alone cannot tell apart from no change at all.
+            ownerEpoch += 1;
+
             // A DIFFERENT CUSTOMER'S LINES GO FIRST, BEFORE ANYTHING ELSE.
             // They are not this person's, so they must not be shown to them,
             // and — the part that would actually be a bug — they must not be
@@ -557,6 +683,7 @@
             if (ownerId && ownerId !== nextOwner) {
                 lines = [];
                 ownerId = null;
+                knownRevision = null;
                 clearGuestStorage();
             }
 
@@ -707,26 +834,41 @@
         const id = String(productId);
         const wanted = clampQuantity(quantity === undefined ? 1 : quantity) || 1;
 
+        // F07 — the catalogue lookup, ALWAYS, before the existing-line check
+        // rather than only on the branch that turned out to need it. Two
+        // overlapping add() calls for the SAME brand-new product used to
+        // both find() nothing (nothing existed yet for either of them to
+        // find), both await this same lookup, and both push their own line
+        // — the check that was supposed to stop the second one ran BEFORE
+        // the await, not after it. Awaiting this unconditionally moves the
+        // decision to AFTER every await this function makes, so the second
+        // call sees what the first one already did.
+        //
+        // The snapshot is taken from the catalogue rather than from the
+        // card's rendered text: the card shows a formatted price and a
+        // truncated name, neither of which round-trips. loadProducts() is
+        // the same cached promise every section already reads, so an
+        // existing line's add costs no extra request.
+        let product = null;
+        try {
+            const products = await section.loadProducts();
+            product = products.find(entry => String(entry.id) === id) || null;
+        } catch (error) {
+            console.warn('Cart: could not read the catalogue to add this product.', error);
+        }
+
+        if (!product) {
+            console.warn('Cart: product ' + id + ' is not in the catalogue; not adding it.');
+            return false;
+        }
+
+        // The final lookup, AFTER every await above, and the only mutation
+        // in this function — nothing between here and persist()/notify()
+        // yields, so a second, concurrent add() cannot interleave with it.
         const existing = find(id);
         if (existing) {
             existing.quantity = Math.min(existing.quantity + wanted, MAX_QUANTITY);
         } else {
-            // The snapshot is taken here, from the catalogue rather than from
-            // the card's rendered text: the card shows a formatted price and a
-            // truncated name, neither of which round-trips.
-            let product = null;
-            try {
-                const products = await section.loadProducts();
-                product = products.find(entry => String(entry.id) === id) || null;
-            } catch (error) {
-                console.warn('Cart: could not read the catalogue to add this product.', error);
-            }
-
-            if (!product) {
-                console.warn('Cart: product ' + id + ' is not in the catalogue; not adding it.');
-                return false;
-            }
-
             lines.push({
                 id,
                 name: String(product.name || ''),
@@ -1063,7 +1205,7 @@
         if (!handle || !handle.node.isConnected) return;
 
         if (!list.length) {
-            handle.body.innerHTML = emptyHTML();
+            handle.body.innerHTML = cartErrorBannerHTML() + emptyHTML();
             handle.footerEl.innerHTML = '';
 
             const keep = handle.node.querySelector('#cart-keep-shopping');
@@ -1074,11 +1216,36 @@
             return;
         }
 
-        handle.body.innerHTML = '<div class="px-6">' + list.map(lineHTML).join('\n') + '</div>';
+        handle.body.innerHTML = cartErrorBannerHTML() + '<div class="px-6">' + list.map(lineHTML).join('\n') + '</div>';
         handle.footerEl.innerHTML = footerHTML(list);
 
         chrome.enhance(handle.node);
         restoreFocus(memo);
+    }
+
+    // F06 — writes used to only ever warn on failure, so a customer whose
+    // save silently failed had no way to know their cart was not what the
+    // server held. Persistent (module state, not a one-shot toast) and
+    // re-rendered by paint() itself, so it survives whatever repaint an
+    // unrelated quantity change triggers next, and is announced the same
+    // way the checkout/account error banners now are (X01's role="alert").
+    let cartSaveErrorMessage = null;
+
+    function cartErrorBannerHTML() {
+        if (!cartSaveErrorMessage) return '';
+        return '<div class="px-6 pt-4"><div role="alert" aria-atomic="true" class="mb-3 p-3 bg-red-50 text-red-700 rounded-sm border border-red-200 text-xs font-semibold">' +
+            escapeHtml(cartSaveErrorMessage) + '</div></div>';
+    }
+
+    function showCartSaveError(error) {
+        cartSaveErrorMessage = (error && error.message) || 'Could not save your cart. Check your connection and try again.';
+        if (handle) paint();
+    }
+
+    function clearCartSaveError() {
+        if (!cartSaveErrorMessage) return;
+        cartSaveErrorMessage = null;
+        if (handle) paint();
     }
 
     function open() {
@@ -1125,11 +1292,27 @@
     // thrown away the moment it was used.
     function wireDrawer(node) {
         node.addEventListener('click', (event) => {
-            const target = event.target.closest('[data-cart-action], #cart-clear, #cart-to-quote');
+            const target = event.target.closest('[data-cart-action], #cart-clear, #cart-to-quote, #cart-checkout');
             if (!target) return;
 
             if (target.id === 'cart-clear') {
                 clear();
+                return;
+            }
+
+            // F06 — "Proceed to Checkout" is an ordinary <a> navigation and
+            // used to fire with no regard for a debounced write still
+            // sitting in its 400ms window: a quantity typed and then
+            // "Proceed to Checkout" clicked promptly enough could reach
+            // checkout.html before that save had even been SENT, let alone
+            // landed. Held here just long enough to flush it — the same
+            // await the header cart's own Buy Now takes below — before
+            // letting the navigation continue.
+            if (target.id === 'cart-checkout') {
+                event.preventDefault();
+                flushPendingWrite().then(() => {
+                    window.location.assign(target.href || '/store/checkout.html');
+                });
                 return;
             }
 
