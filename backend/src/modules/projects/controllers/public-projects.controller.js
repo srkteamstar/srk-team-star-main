@@ -9,6 +9,7 @@
 const express = require('express');
 const { supabase } = require('../../../core/database/supabase');
 const { isSectionVisible } = require('../services/project-visibility.service');
+const { errorTag } = require('../../../shared/error-tag');
 
 /** @returns {import('express').Router} */
 function publicProjectsController() {
@@ -42,7 +43,7 @@ function publicProjectsController() {
                 projects
             });
         } catch (error) {
-            console.error("Fetch Public Projects Error:", error);
+            console.error("Fetch Public Projects Error:", errorTag(error));
             res.status(500).json({ error: "Failed to fetch projects." });
         }
     });

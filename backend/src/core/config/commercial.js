@@ -15,13 +15,29 @@
  * value here changes nothing until the process restarts, and
  * `POST /api/checkout/summary` is the one call that reports what the RUNNING
  * process believes.
+ *
+ * IN PRODUCTION, THE FALLBACK BELOW IS NOT A VALUE — IT IS A MISSING
+ * DEPLOYMENT STEP. Falling back to it silently in a real deployment means an
+ * operator who forgot to set GST_RATE or SHIPPING_FREE_ABOVE gets a fully
+ * working checkout that charges the placeholder numbers with nothing at
+ * startup to say so. commercialNumber() below still returns the fallback for
+ * test/development — nothing about the VALUES here changes, and this file
+ * has no authority to decide what the real business numbers are — but once
+ * NODE_ENV=production it refuses to start rather than guess.
  */
 // Commercial values are deployment settings, not sample literals buried in
 // code. Defaults are confirmed business terms and can be replaced without a
 // code edit; environment changes still take effect only after a restart.
+const { isProduction } = require('./runtime');
+
 function commercialNumber(name, fallback, minimum, maximum) {
     const raw = process.env[name];
-    if (raw === undefined || raw === '') return fallback;
+    if (raw === undefined || raw === '') {
+        if (isProduction) {
+            throw new Error(`${name} must be set explicitly in production — no fallback is used once NODE_ENV=production (or VERCEL is set). The current placeholder default is ${fallback}; confirm the real business figure and set ${name} in the deployment environment.`);
+        }
+        return fallback;
+    }
     const value = Number(raw);
     if (!Number.isFinite(value) || value < minimum || value > maximum) {
         throw new Error(`${name} must be a number between ${minimum} and ${maximum}.`);

@@ -213,3 +213,28 @@ a Supabase key or the client SDK. Realtime is off everywhere, because Supabase
 filters realtime through RLS and turning it on would mean granting the public
 `anon` role `SELECT` on tables full of customer PII. If live updates are ever
 wanted, add them server-side — never by granting `anon` a policy.
+
+## Public discovery and accessibility
+
+The storefront now serves read-only product pages at `/products/` and
+`/products/:slug`. Normal product-card clicks still open the store overlay;
+opening the link in a new tab serves complete HTML. Product pages use only the
+public product projection, not customer data or privileged routes.
+
+Set `SITE_ORIGIN` in the deployment environment to the **confirmed public HTTPS
+origin** (no path, query, credentials or preview domain). This enables absolute
+canonical URLs, sharing URLs and `/sitemap.xml`. With no valid origin, pages
+remain usable, canonical URLs are omitted and the sitemap returns 503 rather
+than publishing a guessed hostname. After confirming the domain, add its
+absolute `/sitemap.xml` URL to `public/robots.txt` and submit it in Search Console.
+Restart the backend after configuration or backend-source changes.
+
+The metadata renderer preserves existing script CSP restrictions using exact
+hashes. Checkout/payment documents retain their noindex policy. Product schema
+does not invent offers, stock, reviews or ratings; blog authors still require
+verified attribution. See `docs/accessibility-seo-implementation-2026-08-31.md`
+for the completed work, remaining decisions and rollback notes.
+
+The browser test harness accepts `SRK_TEST_PORT` when its default port is busy.
+It waits for its own process to start, so an interrupted, stale harness cannot
+silently supply the test responses.

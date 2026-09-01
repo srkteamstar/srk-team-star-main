@@ -3,6 +3,7 @@ const express = require('express');
 const fs = require('fs');
 const paths = require('../../../core/config/paths');
 const { escapeHtmlText: escape } = require('../../../shared/text');
+const { priceNumber, round2 } = require('../../../shared/money');
 const { siteOrigin, publicPagePaths, safeImage, sendHtmlPage } = require('../../../core/http/page-metadata');
 const { publicCatalogue, publicProductBySlugOrId, selectMachineryHero } = require('../services/public-catalogue.service');
 
@@ -94,6 +95,25 @@ function productPagesController() {
             if (meta.image) schemaProduct.image = meta.image;
             if (product.category_name) schemaProduct.category = product.category_name;
             if (origin) schemaProduct.url = origin + meta.path;
+            // products.price is a text column and "On request" is a legal,
+            // common value (43 of 48 rows) — see shared/money.js's header. Reuse
+            // its exact parsing rule rather than a second one here, so this page
+            // and priceCheckout() can never disagree about which products are
+            // priced. priceNumber() already returns null for "On request" and
+            // for the id-9 seed/test placeholder (public-catalogue.service.js's
+            // toPublicProduct() rewrites that one to the string "On request"
+            // before this controller ever sees it), so an Offer is only ever
+            // added for a product this storefront can actually sell online.
+            const unitPrice = priceNumber(product.price);
+            if (unitPrice !== null) {
+                schemaProduct.offers = {
+                    '@type': 'Offer',
+                    priceCurrency: 'INR',
+                    price: round2(unitPrice).toFixed(2),
+                    availability: 'https://schema.org/InStock'
+                };
+                if (origin) schemaProduct.offers.url = origin + meta.path;
+            }
             meta.schema = { '@context': 'https://schema.org', '@graph': [schemaProduct] };
             if (origin) meta.schema['@graph'].push({ '@type': 'BreadcrumbList', itemListElement: [
                 { '@type': 'ListItem', position: 1, name: 'Home', item: origin + '/' },

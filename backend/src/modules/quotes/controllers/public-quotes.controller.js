@@ -13,6 +13,7 @@ const { quoteReference } = require('../domain/quote-reference');
 const { calculateQuote } = require('../services/calculate-quote.service');
 const { saveQuoteRequest } = require('../services/save-quote-request.service');
 const { quoteLimiter, quoteCalculationLimiter } = require('../infrastructure/quote-rate-limit');
+const { errorTag } = require('../../../shared/error-tag');
 
 function requestHeader(body) {
     const header = {
@@ -72,7 +73,7 @@ function publicQuotesController() {
             if (!priced.ok) return res.status(400).json({ error: priced.error });
             res.status(200).json(priced);
         } catch (error) {
-            console.error('Quote calculation error:', error);
+            console.error('Quote calculation error:', errorTag(error));
             res.status(500).json({ error: 'The quote could not be calculated right now.' });
         }
     });
@@ -144,7 +145,7 @@ function publicQuotesController() {
                 snapshot: snapshotFor(reference, record.created_at, header, priced)
             });
         } catch (error) {
-            console.error('Database Error (Quote Insert):', error);
+            console.error('Database Error (Quote Insert):', errorTag(error));
             res.status(500).json({ error: 'An error occurred while saving your quote request.' });
         }
     });

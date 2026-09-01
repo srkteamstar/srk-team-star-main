@@ -7,7 +7,7 @@ module.exports = defineConfig({
     expect: { timeout: 8_000 },
     workers: 1,
     use: {
-        baseURL: 'http://127.0.0.1:3457',
+        baseURL: 'http://127.0.0.1:' + (process.env.SRK_TEST_PORT || '3457'),
         browserName: 'chromium',
         trace: 'retain-on-failure',
         screenshot: 'only-on-failure'

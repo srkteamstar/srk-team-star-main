@@ -59,6 +59,20 @@
  * server-side; resolveMainImage() re-derives it from the `images` array first
  * so the rule lives visibly here too, and falls back through image_url and then
  * the lowest slot for a product whose main flag was never set.
+ *
+ * WHY THE GRID PAGES ITSELF RATHER THAN THE FETCH
+ * ------------------------------------------------
+ * Search/filter/sort all run client-side, over the section's own `selected`
+ * array, and none of them can narrow a set they have not been handed yet —
+ * so the paginated fetch in fetchAllProductPages() still resolves the WHOLE
+ * matching set before anything filters or sorts it; a partial catalogue
+ * would make "no matches" and "not loaded yet" indistinguishable. What DOES
+ * block first paint at scale is turning every matching product into markup
+ * and inserting all of it in one synchronous innerHTML write. render() (in
+ * open(), below) only ever builds PAGE_SIZE cards at a time and appends more
+ * behind an accessible "Load more" button, moreControlHTML(); a catalogue
+ * small enough to fit in one batch — every section's, today — never shows
+ * the control at all, so this changes nothing about how the site looks now.
  */
 
 (() => { // IIFE to prevent variable collisions with other modules
@@ -238,6 +252,18 @@
 
     const DEFAULT_SORT = 'newest';
 
+    // How many cards render() paints into the DOM before it stops and waits
+    // for "Load more" — not how many products the fetch asks for. Every
+    // section still resolves the WHOLE matching set in one request (see
+    // loadProducts() below), because search/filter/sort here run entirely in
+    // the browser and cannot narrow a set they have not seen yet. What this
+    // caps is the other half of "wait for everything before the customer
+    // sees anything": building and inserting a card per matching product,
+    // synchronously, in one innerHTML write. A catalogue small enough to fit
+    // in one batch (true of every section today) never shows the control at
+    // all — see moreControlHTML().
+    const PAGE_SIZE = 24;
+
     // Newest first with a name tie-break, for the sections that have to pick a
     // fixed number of products rather than order the ones they were handed.
     // Without the tie-break, two products saved in the same second would swap
@@ -314,9 +340,8 @@
             : '<div class="absolute inset-6 flex items-center justify-center text-center text-[#12170f]/30 text-sm font-semibold px-2">' + name + '</div>';
 
         return [
-            // No product detail route exists yet, so the card deliberately does
-            // not navigate — it used to send every click to a 404. The id and
-            // slug ride along on the element, ready for a real route later.
+            // Real links expose public product pages to crawlers and new tabs;
+            // ordinary clicks retain the existing in-store details overlay.
             '<article data-product-id="' + escapeHtml(product.id) + '" data-product-slug="' + escapeHtml(product.url_slug) + '"',
             '         class="group flex flex-col bg-white border border-[#12170f]/10 rounded-sm overflow-hidden hover:shadow-xl hover:scale-[101%] transition-all duration-300 h-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d4af37] focus-visible:ring-offset-2">',
             '    <a href="' + escapeHtml(productHref) + '" data-product-link aria-label="View details for ' + name + '" class="relative w-full h-[200px] shrink-0 bg-[#f1f5f9] flex items-center justify-center p-6 overflow-hidden focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#705714] focus-visible:ring-inset">',
@@ -491,6 +516,11 @@
             '    </div>',
             toolbarHTML(filtersHTML),
             '    <div class="product-container grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"></div>',
+            // Painted by render() below, never by shellHTML itself: empty
+            // until render() knows whether this selection is even long enough
+            // to need it. aria-live so a screen-reader visitor who presses
+            // "Load more" hears the updated count, not just a DOM change.
+            '    <div class="product-section-more mt-8 text-center" aria-live="polite"></div>',
             '</div>'
         ].join('\n');
     }
@@ -509,6 +539,24 @@
         ].join('\n');
     }
 
+    // A real <button>, not a scroll listener — reachable by keyboard and
+    // announced by a screen reader the same way the rest of this shared
+    // render path already insists on. '' once every matching product is
+    // already painted, which is also the common case today: every section's
+    // live catalogue fits in one batch, so the control never appears and the
+    // grid looks exactly as it always has.
+    function moreControlHTML(shown, total) {
+        if (shown >= total) return '';
+
+        const remaining = total - shown;
+        return [
+            '<p class="text-xs text-[#1f271b]/50 mb-3">Showing ' + shown + ' of ' + total +
+                (total === 1 ? ' product' : ' products') + '</p>',
+            '<button type="button" class="product-section-load-more px-6 py-2.5 rounded-sm border border-[#12170f]/15 bg-white text-[#12170f] text-xs font-bold uppercase tracking-wider hover:bg-[#12170f] hover:text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d4af37]">Load ' +
+                Math.min(PAGE_SIZE, remaining) + ' more</button>'
+        ].join('\n');
+    }
+
     // ------------------------------------------------------------------
     // DATA
     // ------------------------------------------------------------------
@@ -522,18 +570,51 @@
     // this used to. Every section, the cart's re-resolution and the quote
     // picker still see one flat array from loadProducts(): the paging
     // happens once, here, and is invisible to everything that calls it.
+    //
+    // FETCHED IN CONCURRENT ROUNDS OF PAGE_FETCH_CONCURRENCY, NOT ONE PAGE
+    // AT A TIME (P01). A catalogue long enough to need several pages used to
+    // pay for every one of them in series — page 2 could not even start
+    // until page 1's full round trip had landed — which is exactly the
+    // "100 serial requests before first paint" shape the audit flagged.
+    // Each round fires several page requests at once and only starts the
+    // next round once every request in this one has answered, which is what
+    // keeps the loop correct without knowing the total page count up front:
+    // publicCatalogueList() answers a page past the real end with
+    // `{ items: [], hasMore: false }` rather than an error (see
+    // public-catalogue.service.js — an offset-past-the-end range() read is
+    // simply empty), so a round that overshoots the last page by a few
+    // requests degrades to a few harmless empty responses, never a failure.
+    // The loop still only continues past a round when that round's LAST
+    // page said hasMore, so it cannot stop early either.
+    const PAGE_FETCH_CONCURRENCY = 4;
+
+    async function fetchProductPage(page) {
+        const response = await fetch(PRODUCTS_URL + '?page=' + page, { cache: 'no-store' });
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        return response.json();
+    }
+
     async function fetchAllProductPages() {
         const all = [];
-        let page = 1;
-        for (;;) {
-            const response = await fetch(PRODUCTS_URL + '?page=' + page, { cache: 'no-store' });
-            if (!response.ok) throw new Error('HTTP ' + response.status);
-            const body = await response.json();
-            const items = Array.isArray(body && body.items) ? body.items : [];
-            all.push(...items);
-            if (!body || !body.hasMore) break;
-            page += 1;
+        let nextPage = 1;
+        let hasMore = true;
+
+        while (hasMore) {
+            const round = [];
+            for (let i = 0; i < PAGE_FETCH_CONCURRENCY; i++) round.push(nextPage + i);
+            nextPage += PAGE_FETCH_CONCURRENCY;
+
+            const bodies = await Promise.all(round.map(fetchProductPage));
+
+            bodies.forEach(body => {
+                const items = Array.isArray(body && body.items) ? body.items : [];
+                all.push(...items);
+            });
+
+            const last = bodies[bodies.length - 1];
+            hasMore = Boolean(last && last.hasMore);
         }
+
         return all;
     }
 
@@ -619,10 +700,21 @@
         reveal(options.wrapperId);
 
         const productContainer = view.querySelector('.product-container');
+        const moreHost = view.querySelector('.product-section-more');
         const sortSelect = view.querySelector('#sort-by');
         if (sortSelect) sortSelect.value = DEFAULT_SORT;
 
-        const render = () => {
+        // How many of the CURRENT filtered/sorted set are painted right now
+        // — this is DOM-rendering pagination, not another network request:
+        // the whole matching set was already resolved above, because
+        // search/filter/sort run in the browser and cannot narrow a set they
+        // have not seen yet. What this defers is building and inserting a
+        // <article> per match in one synchronous innerHTML write, which is
+        // the part that actually blocks first paint once a catalogue is long
+        // enough to notice.
+        let shown = PAGE_SIZE;
+
+        const render = (focusMoreControl) => {
             const match = (filters && filters.match) ? filters.match : () => true;
             const compare = SORTS[sortSelect ? sortSelect.value : DEFAULT_SORT] || SORTS[DEFAULT_SORT];
 
@@ -636,14 +728,43 @@
 
             if (!visible.length) {
                 productContainer.innerHTML = '<p class="col-span-full text-center text-gray-500 py-10">No products found in this category.</p>';
+                if (moreHost) moreHost.innerHTML = '';
                 return;
             }
 
-            productContainer.innerHTML = visible.map(entry => card(entry.product)).join('\n');
+            const batch = visible.slice(0, shown);
+            productContainer.innerHTML = batch.map(entry => card(entry.product)).join('\n');
+
+            if (!moreHost) return;
+
+            moreHost.innerHTML = moreControlHTML(batch.length, visible.length);
+
+            const loadMore = moreHost.querySelector('.product-section-load-more');
+            if (loadMore) {
+                loadMore.addEventListener('click', () => {
+                    shown += PAGE_SIZE;
+                    render(true);
+                });
+                if (focusMoreControl) loadMore.focus();
+            } else if (focusMoreControl) {
+                // That click painted the last of them — nothing left to put
+                // keyboard focus on, so it lands on the summary line instead
+                // of silently dropping to <body>.
+                const summary = moreHost.querySelector('p');
+                if (summary) {
+                    summary.setAttribute('tabindex', '-1');
+                    summary.focus();
+                }
+            }
         };
 
-        if (sortSelect) sortSelect.addEventListener('change', render);
-        if (filters && filters.init) filters.init(view, render);
+        // A filter or sort pick changes WHICH set is being paged, so it
+        // starts that set over at its first batch rather than keeping
+        // whatever count the previous selection had scrolled to.
+        const resetAndRender = () => { shown = PAGE_SIZE; render(); };
+
+        if (sortSelect) sortSelect.addEventListener('change', resetAndRender);
+        if (filters && filters.init) filters.init(view, resetAndRender);
 
         render();
     }

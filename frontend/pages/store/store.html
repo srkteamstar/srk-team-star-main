@@ -17,7 +17,7 @@
          every document: the mobile nav panel below needs it, and so does
          every overlay that opens later. -->
     <script defer src="/assets/versioned/b23aee6731def735/scroll-lock-module.js" data-asset-source="/js/platform/scroll-lock-module.js"></script>
-    <script defer src="/assets/versioned/ae976cf8af58d307/responsive-navigation-module.js" data-asset-source="/js/platform/responsive-navigation-module.js"></script>
+    <script defer src="/assets/versioned/afd1ed5cac38cbb3/responsive-navigation-module.js" data-asset-source="/js/platform/responsive-navigation-module.js"></script>
     <script defer src="/assets/versioned/0bf174d39b9abc30/lenis-1.1.18.min.js" data-asset-source="/assets/vendor/lenis-1.1.18.min.js"></script>
 
     <style>
@@ -72,7 +72,7 @@
         }
     </style>
     <link rel="stylesheet" href="/assets/versioned/86981aa9e736fa7f/fonts.css" data-asset-source="/assets/vendor/fonts/fonts.css">
-    <link rel="stylesheet" href="/assets/versioned/057bcce94deb4543/storefront-theme.css" media="screen" data-asset-source="/assets/styles/storefront-theme.css">
+    <link rel="stylesheet" href="/assets/versioned/ccd952009cca2a16/storefront-theme.css" media="screen" data-asset-source="/assets/styles/storefront-theme.css">
 </head>
 
 <body class="flex flex-col min-h-screen bg-white selection:bg-[#d4af37] selection:text-white" data-srk-page="store">
@@ -344,7 +344,17 @@
                                 </div>
 
                                 <div class="flex items-center gap-4">
-                                    <a href="#"
+                                    <!-- There is no "Complete Sets"/combos section to route this to —
+                                         AGENTS.md's own Known Issues note (and store.html's hash
+                                         router comment, below) both record that no section is
+                                         registered against the sidebar's data-policy="combos" button,
+                                         so a #combos link would land nowhere. "Shop by Category"'s own
+                                         View All faces the same problem (no single category owns a
+                                         curated bundle row) and answers it by sending the visitor to
+                                         the full catalogue instead of a dead "#" — this follows that
+                                         same, already-working pattern rather than a href="#" that
+                                         reloaded the page in place and went nowhere. -->
+                                    <a href="#all-products"
                                         class="hidden sm:inline-block text-sm font-bold text-[#d4af37] hover:scale-105 transition-transform duration-300 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d4af37] rounded-sm px-2">View
                                         All &nbsp;</a>
                                     <div class="flex gap-2">
@@ -420,9 +430,22 @@
                                                     class="text-sm text-[#12170f]/40 line-through block">₹48,500</span>
                                                 <span class="font-bold text-2xl text-[#12170f]">₹41,225</span>
                                             </div>
-                                            <button
-                                                class="bg-white border border-[#12170f]/10 text-[#12170f] font-semibold px-5 py-2.5 rounded hover:bg-[#d4af37] hover:border-[#d4af37] hover:text-white transition-colors duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d4af37] focus-visible:ring-offset-2 text-sm">Add
-                                                Bundle</button>
+                                            <!-- Bundle pricing above is static, hand-entered copy, not
+                                                 a server-priced total, and there is no real product id
+                                                 for "Master Joiner Setup" as a single purchasable item
+                                                 — wiring the button to add-to-cart would let a customer
+                                                 buy at a price nothing on the server actually charges.
+                                                 So it stays honestly disabled, and the real CTA is a
+                                                 quote request against the same enquiry flow contact.html
+                                                 already uses. -->
+                                            <div class="flex flex-col items-end gap-1.5">
+                                                <button type="button" disabled aria-disabled="true"
+                                                    title="Bundles are quoted individually — request a quote for confirmed pricing and availability."
+                                                    class="bg-white border border-[#12170f]/10 text-[#12170f] font-semibold px-5 py-2.5 rounded text-sm opacity-40 cursor-not-allowed">Add
+                                                    Bundle</button>
+                                                <a href="/contact.html#enquiry-form"
+                                                    class="text-xs font-bold text-[#d4af37] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d4af37] rounded-sm">Request a bundle quote &rarr;</a>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -472,9 +495,14 @@
                                                 <span class="text-sm text-[#12170f]/40 line-through block">₹4,050</span>
                                                 <span class="font-bold text-2xl text-[#12170f]">₹3,645</span>
                                             </div>
-                                            <button
-                                                class="bg-white border border-[#12170f]/10 text-[#12170f] font-semibold px-5 py-2.5 rounded hover:bg-[#d4af37] hover:border-[#d4af37] hover:text-white transition-colors duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d4af37] focus-visible:ring-offset-2 text-sm">Add
-                                                Bundle</button>
+                                            <div class="flex flex-col items-end gap-1.5">
+                                                <button type="button" disabled aria-disabled="true"
+                                                    title="Bundles are quoted individually — request a quote for confirmed pricing and availability."
+                                                    class="bg-white border border-[#12170f]/10 text-[#12170f] font-semibold px-5 py-2.5 rounded text-sm opacity-40 cursor-not-allowed">Add
+                                                    Bundle</button>
+                                                <a href="/contact.html#enquiry-form"
+                                                    class="text-xs font-bold text-[#d4af37] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d4af37] rounded-sm">Request a bundle quote &rarr;</a>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -526,9 +554,14 @@
                                                     class="text-sm text-[#12170f]/40 line-through block">₹75,500</span>
                                                 <span class="font-bold text-2xl text-[#12170f]">₹60,400</span>
                                             </div>
-                                            <button
-                                                class="bg-white border border-[#12170f]/10 text-[#12170f] font-semibold px-5 py-2.5 rounded hover:bg-[#d4af37] hover:border-[#d4af37] hover:text-white transition-colors duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d4af37] focus-visible:ring-offset-2 text-sm">Add
-                                                Bundle</button>
+                                            <div class="flex flex-col items-end gap-1.5">
+                                                <button type="button" disabled aria-disabled="true"
+                                                    title="Bundles are quoted individually — request a quote for confirmed pricing and availability."
+                                                    class="bg-white border border-[#12170f]/10 text-[#12170f] font-semibold px-5 py-2.5 rounded text-sm opacity-40 cursor-not-allowed">Add
+                                                    Bundle</button>
+                                                <a href="/contact.html#enquiry-form"
+                                                    class="text-xs font-bold text-[#d4af37] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d4af37] rounded-sm">Request a bundle quote &rarr;</a>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -578,9 +611,14 @@
                                                 <span class="text-sm text-[#12170f]/40 line-through block">₹3,200</span>
                                                 <span class="font-bold text-2xl text-[#12170f]">₹2,816</span>
                                             </div>
-                                            <button
-                                                class="bg-white border border-[#12170f]/10 text-[#12170f] font-semibold px-5 py-2.5 rounded hover:bg-[#d4af37] hover:border-[#d4af37] hover:text-white transition-colors duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d4af37] focus-visible:ring-offset-2 text-sm">Add
-                                                Bundle</button>
+                                            <div class="flex flex-col items-end gap-1.5">
+                                                <button type="button" disabled aria-disabled="true"
+                                                    title="Bundles are quoted individually — request a quote for confirmed pricing and availability."
+                                                    class="bg-white border border-[#12170f]/10 text-[#12170f] font-semibold px-5 py-2.5 rounded text-sm opacity-40 cursor-not-allowed">Add
+                                                    Bundle</button>
+                                                <a href="/contact.html#enquiry-form"
+                                                    class="text-xs font-bold text-[#d4af37] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d4af37] rounded-sm">Request a bundle quote &rarr;</a>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -814,7 +852,7 @@
     </footer>
     <script defer src="/assets/versioned/7a3055125a1719f4/general-scroll-reveal-module.js" data-asset-source="/js/platform/general-scroll-reveal-module.js"></script>
     <script defer src="/assets/versioned/a0797181a51289c8/custom-select-module.js" data-asset-source="/js/platform/custom-select-module.js"></script>
-    <script defer src="/assets/versioned/6ee34a6c3631879e/product-section-shared-module.js" data-asset-source="/js/shared/product-section-shared-module.js"></script>
+    <script defer src="/assets/versioned/bc047ba29d032b3b/product-section-shared-module.js" data-asset-source="/js/shared/product-section-shared-module.js"></script>
     <!-- After product-section-shared-module.js, whose escapeHtml it reuses.
          Before every surface that reads it: the cart, the account overlay,
          the search overlay and the quote overlay. -->
@@ -847,9 +885,9 @@
          backwards and was corrected. -->
     <script defer src="/assets/versioned/73777fedd0beeef1/customer-session-module.js" data-asset-source="/js/modules/account/customer-session-module.js"></script>
     <script defer src="/assets/versioned/fbb7f8c14f16ab50/order-invoice-module.js" data-asset-source="/js/modules/orders/order-invoice-module.js"></script>
-    <script defer src="/assets/versioned/48caec60133d6834/my-orders-module.js" data-asset-source="/js/modules/account/my-orders-module.js"></script>
+    <script defer src="/assets/versioned/b9469d41508b2a5b/my-orders-module.js" data-asset-source="/js/modules/account/my-orders-module.js"></script>
     <script defer src="/assets/versioned/c19b7d64565071b7/profile-icon-loader.js" data-asset-source="/js/modules/account/profile-icon-loader.js"></script>
-    <script defer src="/assets/versioned/2ca57e1c4cb941e5/cart-module.js" data-asset-source="/js/modules/cart/cart-module.js"></script>
+    <script defer src="/assets/versioned/0d45da21f89360d2/cart-module.js" data-asset-source="/js/modules/cart/cart-module.js"></script>
     <script defer src="/assets/versioned/d986ed55fbab9bc5/store-search-module.js" data-asset-source="/js/modules/search/store-search-module.js"></script>
     <!-- The product detail route product-section-shared-module.js's card
          comment has been waiting for. NOT loaded here any more (P06) - this
@@ -859,7 +897,7 @@
          module the first time a card is actually clicked, then calls the
          exact same window.productDetails.open() this used to self-attach
          for on every page load. -->
-    <script defer type="text/plain" data-lazy-module="product-details" src="/assets/versioned/6cef4d97fccde411/product-details-module.js" data-asset-source="/js/modules/product-details/product-details-module.js"></script>
+    <script defer type="text/plain" data-lazy-module="product-details" src="/assets/versioned/23288d74db616993/product-details-module.js" data-asset-source="/js/modules/product-details/product-details-module.js"></script>
     <script defer src="/assets/versioned/2a687362463776f1/store-route-context-module.js" data-asset-source="/js/modules/storefront/shared/store-route-context-module.js"></script>
     <!-- Same as product-details above: inert until
          lazy-overlay-loader-module.js loads it on first demand (the sidebar

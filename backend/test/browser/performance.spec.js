@@ -78,11 +78,11 @@ test('Hero recovers from an image failure without stopping the gallery', async (
     await expect(page.locator('[data-machinery-hero-slide][data-product-id="2"]')).toHaveAttribute('data-active', 'true', { timeout: 6000 });
 });
 
-test('Home copy remains visible without JavaScript', async ({ browser }) => {
-    const context = await browser.newContext({ javaScriptEnabled: false });
+test('Home copy remains visible without JavaScript', async ({ browser, baseURL }) => {
+    const context = await browser.newContext({ javaScriptEnabled: false, baseURL });
     try {
         const page = await context.newPage();
-        await page.goto('http://127.0.0.1:3457/', { waitUntil: 'domcontentloaded' });
+        await page.goto('/', { waitUntil: 'domcontentloaded' });
         for (const id of ['hero-heading', 'hero-subtext', 'hero-ctas']) {
             await expect(page.locator('#' + id)).toHaveCSS('opacity', '1');
             await expect(page.locator('#' + id)).toBeVisible();

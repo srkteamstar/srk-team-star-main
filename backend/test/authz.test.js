@@ -209,8 +209,32 @@ async function req(cookies, method, path, body, extraHeaders) {
 
     r = await req(anon, 'POST', '/api/auth/register',
         { name: 'Escalate', email: 'esc@example.test', phone: '9000000099', password: PASSWORD, role_id: 1 });
-    check('register cannot self-assign another role',
-        r.status === 201 && r.body.customer.role === 'customer', JSON.stringify(r.body).slice(0, 140));
+    // S02: registration answers every outcome with the same generic 202 —
+    // never the created customer — so the role check below has to go
+    // through a follow-up GET /api/auth/me on the SAME session instead of
+    // reading it out of this response.
+    check('registration answers with the generic accepted response, not account details',
+        r.status === 202 && r.body.success === true && !r.body.customer, JSON.stringify(r.body).slice(0, 140));
+    const escalateSession = await req(anon, 'GET', '/api/auth/me');
+    check('...but the session it started cannot self-assign another role',
+        escalateSession.status === 200 && escalateSession.body.customer
+            && escalateSession.body.customer.role === 'customer',
+        JSON.stringify(escalateSession.body).slice(0, 140));
+
+    // S02: a colliding email/phone must be indistinguishable from a genuinely
+    // new registration — same status, same body — or the route is a free
+    // existence oracle for anyone who can post to it.
+    const REGISTER_ACCEPTED_BODY = JSON.stringify({ success: true, message: 'If this contact can be registered, verification instructions will follow.' });
+    r = await req(jar(), 'POST', '/api/auth/register',
+        { name: 'Collider', email: 'esc@example.test', phone: '9000000199', password: PASSWORD });
+    check('a colliding email gets the identical generic response (S02)',
+        r.status === 202 && JSON.stringify(r.body) === REGISTER_ACCEPTED_BODY,
+        JSON.stringify(r.body).slice(0, 140));
+    r = await req(jar(), 'POST', '/api/auth/register',
+        { name: 'Collider Two', email: 'unique-new@example.test', phone: '9000000099', password: PASSWORD });
+    check('a colliding phone gets the identical generic response (S02)',
+        r.status === 202 && JSON.stringify(r.body) === JSON.stringify({ success: true, message: 'If this contact can be registered, verification instructions will follow.' }),
+        JSON.stringify(r.body).slice(0, 140));
 
     r = await req(jar(), 'POST', '/api/auth/register', {
         name: 'x'.repeat(5000), email: 'bounded@example.test', phone: '9000000097',

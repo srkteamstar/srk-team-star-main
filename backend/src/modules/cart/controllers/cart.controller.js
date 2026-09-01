@@ -27,6 +27,7 @@ const { supabase } = require('../../../core/database/supabase');
 const { requireCustomer } = require('../../../core/security/guards');
 const { publicCartItem, readCartItems } = require('../domain/cart-line');
 const { cartReadLimiter, cartWriteLimiter } = require('../infrastructure/cart-rate-limit');
+const { errorTag } = require('../../../shared/error-tag');
 
 /** @returns {import('express').Router} */
 function cartController() {
@@ -67,7 +68,7 @@ function cartController() {
                 revision: revRow ? Number(revRow.revision) : 0
             });
         } catch (error) {
-            console.error("Fetch Cart Error:", error);
+            console.error("Fetch Cart Error:", errorTag(error));
             res.status(500).json({ error: "Could not load your cart." });
         }
     });
@@ -120,7 +121,7 @@ function cartController() {
                 revision: data ? Number(data.revision) : 0
             });
         } catch (error) {
-            console.error("Save Cart Error:", error);
+            console.error("Save Cart Error:", errorTag(error));
             res.status(500).json({ error: "Could not save your cart." });
         }
     });

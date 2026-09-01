@@ -26,7 +26,7 @@
 //
 // WHAT THIS IS MEANT TO EXERCISE
 // -------------------------------
-// Five things the fake database cannot prove, matching the audit finding:
+// Six things the fake database cannot prove, matching the audit finding:
 //
 //   1. Refund-ledger dedup       Two deliveries of the same refund.processed
 //                                 event id (payments.controller.js's webhook
@@ -50,20 +50,32 @@
 //                                 give you and SupabaseSessionStore exists for.
 //   5. Access-denial paths       RLS must actually refuse the anon key on
 //                                 tables granted to service_role only.
+//   6. Checkout retry integrity  create_store_order's idempotency_key (035)
+//                                 must be unique per order — two orders cannot
+//                                 share one — and checkout_proof_hash /
+//                                 request_fingerprint (037) must round-trip
+//                                 onto the row exactly as written, since
+//                                 checkout.controller.js's whole S04/F08 fix
+//                                 depends on both actually being persisted.
 //
-// All five are implemented below as real, runnable test bodies — not
-// placeholders — so that pointing TEST_SUPABASE_URL at a real target makes them
-// execute immediately. Test 2 (settlement regression) is written to assert the
-// SAFE behaviour and, as of migration 033, is expected to FAIL once actually
-// run: settle_captured_store_payment() only guards re-applying 'Paid' (its
-// `if v_payment.status = 'Paid' then ... v_already := true` branch) and has no
-// equivalent guard for 'Refunded' / 'Partially Refunded', so a late capture
-// confirmation for an already-refunded payment currently overwrites it back to
-// 'Paid'. That is a real gap this audit surfaced, not a bug in this test — see
-// this batch's report. Fixing the RPC is a migrations/ change and is out of
-// this batch's ownership boundary (backend/migrations/*.sql belongs to another
-// batch); this test exists so the gap is caught by CI rather than silently
-// re-shipped, the moment someone wires a real target up.
+// All six are implemented below as real, runnable test bodies — not
+// placeholders — so that pointing TEST_SUPABASE_URL at a real target makes
+// them execute immediately.
+//
+// AN AUDIT FINDING THIS FILE ITSELF WAS PART OF, NOW ADDRESSED
+// -----------------------------------------------------------------
+// An earlier revision of this suite predated migrations 034-038: its fixture
+// helper only ever wrote migration 031's create_store_order shape (guest
+// token only, no idempotency_key / checkout_proof_hash / request_fingerprint),
+// and test 2 below carried a "KNOWN GAP, expected to FAIL" comment describing
+// settle_captured_store_payment()'s pre-038 behaviour — accurate when
+// written, against migration 033 alone, but stale the moment 038 landed and
+// fixed exactly that gap. That staleness (fixtures targeting an old RPC
+// shape, an assertion whose own comment argued against itself passing) is
+// what this revision corrects: the fixture below now writes the full
+// migration-037 shape, item 2's comment reflects 038's fix rather than
+// pre-dating it, and item 6 is new coverage for the two migrations (035,
+// 037) the old fixture never touched at all.
 //
 // SCHEMA UNCERTAINTY, NOTED RATHER THAN HIDDEN
 // -----------------------------------------------
@@ -71,11 +83,12 @@
 // migration history (012_checkout.sql's own header says so — it is the same
 // fact A01 is about: this repo cannot independently reconstruct its full
 // baseline from migrations alone). The fixture helper below is built only from
-// columns the application code and migrations 010/012/025/031/033 reference. If
-// a real target rejects a fixture insert on a constraint invisible from that
-// history (a NOT NULL or a foreign key on order_items.product_id, say), that
-// failure is itself audit-relevant signal about the undocumented baseline —
-// adjust the fixture or capture the missing baseline, don't paper over it.
+// columns the application code and migrations 010/012/025/031/033/035/037
+// reference. If a real target rejects a fixture insert on a constraint
+// invisible from that history (a NOT NULL or a foreign key on
+// order_items.product_id, say), that failure is itself audit-relevant signal
+// about the undocumented baseline — adjust the fixture or capture the missing
+// baseline, don't paper over it.
 //
 // SAFETY — READ BEFORE POINTING THIS AT ANYTHING
 // --------------------------------------------------
@@ -193,18 +206,45 @@ if (!CONFIGURED) {
     const anonDb = TEST_ANON_KEY ? createClient(TEST_URL, TEST_ANON_KEY) : null;
 
     // ---- Fixture helper -------------------------------------------------------
-    // Goes through the real create_store_order RPC (migration 031's version)
-    // rather than hand-built inserts, so a fixture order is exactly as valid as
-    // one a real guest checkout writes, and stays that way as the schema in
-    // backend/migrations/ evolves independently of this file.
-    async function makeGuestOrder({ amountPaise = 500000 } = {}) {
+    // Goes through the real create_store_order RPC — migration 037's version,
+    // the current one; see "AN AUDIT FINDING THIS FILE ITSELF WAS PART OF"
+    // above — rather than hand-built inserts, so a fixture order is exactly as
+    // valid as one a real guest checkout writes, and stays that way as the
+    // schema in backend/migrations/ evolves independently of this file.
+    //
+    // idempotency_key / checkout_proof_hash / request_fingerprint: migration
+    // 037's function does not validate their SHAPE (that is
+    // checkout.controller.js's job — isStrongRetryToken() /
+    // hashCheckoutProof() in shared/order-access-token.js, and
+    // computeCheckoutFingerprint() in the controller itself), it only stores
+    // whatever text it is given. This fixture supplies realistic-shaped values
+    // (a real UUID for the key, real sha256 hex for the other two) without
+    // reproducing the controller's exact fingerprint algorithm — nothing below
+    // asserts against a SPECIFIC fingerprint, only that a real value round-trips
+    // and that idempotency_key is actually enforced unique by the database, not
+    // by application code alone.
+    function fixtureIdempotencyFields() {
+        const idempotencyKey = crypto.randomUUID();
+        const checkoutProofHash = crypto.createHash('sha256').update(crypto.randomUUID(), 'utf8').digest('hex');
+        const requestFingerprint = crypto.createHash('sha256')
+            .update(JSON.stringify({ v: 1, fixture: true, nonce: crypto.randomUUID() }), 'utf8')
+            .digest('hex');
+        return { idempotencyKey, checkoutProofHash, requestFingerprint };
+    }
+
+    async function makeGuestOrder({ amountPaise = 500000, idempotencyKey } = {}) {
         const amount = (amountPaise / 100).toFixed(2);
         const tokenHash = crypto.createHash('sha256').update(crypto.randomUUID()).digest('hex');
+        const fields = fixtureIdempotencyFields();
+        if (idempotencyKey) fields.idempotencyKey = idempotencyKey; // test 6 reuses an existing key on purpose
 
         const { data, error } = await db.rpc('create_store_order', {
             p_user_id: null,
             p_order: {
                 guest_access_token_hash: tokenHash,
+                idempotency_key: fields.idempotencyKey,
+                checkout_proof_hash: fields.checkoutProofHash,
+                request_fingerprint: fields.requestFingerprint,
                 amount, shipping_amount: '0.00', tax_amount: '0.00', net_amount: amount,
                 status: 'Pending Payment', currency: 'INR'
             },
@@ -224,7 +264,7 @@ if (!CONFIGURED) {
         });
 
         if (error) throw error;
-        return { order: data.order, payment: data.payment };
+        return { order: data.order, payment: data.payment, ...fields };
     }
 
     describe('refund-ledger dedup', () => {
@@ -297,7 +337,7 @@ if (!CONFIGURED) {
         });
     });
 
-    describe('settlement status regression', () => {
+    describe('settlement status regression (migration 038)', () => {
         let order, payment;
 
         before(async () => { ({ order, payment } = await makeGuestOrder()); });
@@ -321,14 +361,16 @@ if (!CONFIGURED) {
 
             const { data: after } = await db.from('payments').select('status').eq('id', payment.id).single();
 
-            // KNOWN GAP, surfaced deliberately: settle_captured_store_payment()
-            // (migration 033) only special-cases `status = 'Paid'` for
-            // idempotency. It has no equivalent branch for 'Refunded' /
-            // 'Partially Refunded', so today this assertion is expected to
-            // FAIL — the RPC will happily flip the row back to 'Paid'. That is
-            // the real regression this test exists to catch; see this batch's
-            // report. Fixing it means editing migrations/033 (or a new
-            // migration), which is outside this batch's ownership boundary.
+            // REGRESSION GUARD, not a known gap. settle_captured_store_payment()
+            // (migration 033) originally special-cased only `status = 'Paid'`
+            // for idempotency, with no equivalent branch for 'Refunded' /
+            // 'Partially Refunded' — so a late capture confirmation for an
+            // already-refunded payment would flip it back to 'Paid'. Migration
+            // 038 (preserve_refund_status_on_settlement) widened that branch to
+            // `status in ('Paid', 'Partially Refunded', 'Refunded')` specifically
+            // to close this. As of 038 this assertion is expected to PASS; if it
+            // starts failing, settle_captured_store_payment() has regressed
+            // toward its pre-038 behaviour.
             assert.notEqual(after.status, 'Paid', 'a refunded payment must never be resurrected to Paid by a late capture');
             assert.equal(after.status, 'Refunded', 'status must remain exactly what the refund left it as');
             assert.equal(settled.error, null);
@@ -359,6 +401,44 @@ if (!CONFIGURED) {
 
             const { data: afterOrder } = await db.from('orders').select('status').eq('id', order.id).single();
             assert.equal(afterOrder.status, 'Payment Review', 'never silently Processing — the cancellation must stay visible');
+        });
+    });
+
+    describe('checkout retry integrity (migrations 035, 037)', () => {
+        // This block is new: the fixture helper above previously wrote none
+        // of idempotency_key / checkout_proof_hash / request_fingerprint at
+        // all (migration 031's shape), so nothing in this file had ever
+        // exercised migrations 035/037 against a real database. See "AN
+        // AUDIT FINDING THIS FILE ITSELF WAS PART OF" at the top of this
+        // file.
+        test('two orders cannot share one idempotency_key (orders_idempotency_key_uq, migration 035)', async () => {
+            const { idempotencyKey } = await makeGuestOrder();
+
+            await assert.rejects(
+                () => makeGuestOrder({ idempotencyKey }),
+                error => {
+                    // supabase-js surfaces a Postgres unique_violation as a
+                    // thrown error only when .throwOnError() is used; the
+                    // fixture helper instead does `if (error) throw error`
+                    // itself, so the rejection IS the PostgREST error object.
+                    assert.equal(error.code, '23505', 'must fail on the unique index specifically, not some other constraint');
+                    return true;
+                },
+                'a second order reusing an existing idempotency_key must be refused by the database itself, not merely by checkout.controller.js\'s own pre-check'
+            );
+        });
+
+        test('checkout_proof_hash and request_fingerprint round-trip onto the order exactly as written', async () => {
+            const { order, checkoutProofHash, requestFingerprint } = await makeGuestOrder();
+
+            const { data: row, error } = await db.from('orders')
+                .select('checkout_proof_hash, request_fingerprint')
+                .eq('id', order.id)
+                .single();
+
+            assert.equal(error, null);
+            assert.equal(row.checkout_proof_hash, checkoutProofHash, 'checkout.controller.js\'s guest-order proof check compares this column byte-for-byte against a freshly hashed value; any transformation here would break every guest retry');
+            assert.equal(row.request_fingerprint, requestFingerprint, 'checkout.controller.js\'s F08 fix refuses a retry whose recomputed fingerprint no longer matches this column — it must be stored exactly as sent');
         });
     });
 

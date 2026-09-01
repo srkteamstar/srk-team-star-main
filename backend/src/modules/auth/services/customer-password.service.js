@@ -34,13 +34,22 @@
  *
  * Node's built-in scrypt implementation keeps this dependency-free. A random
  * salt makes equal passwords produce different rows, and timingSafeEqual keeps
- * verification time independent of the first differing byte. CONCURRENCY_LIMIT
- * bounds how many scrypt calls run at once — v2's cost is deliberately large
- * (128 * N * r bytes, ~128MB per call at these parameters), and every login
- * attempt now runs one (S05's dummy-hash comparison keeps failed attempts on
- * unknown accounts the same shape as real ones), so an unbounded pile of
- * concurrent attempts is a memory-exhaustion path of its own if nothing here
- * queues them.
+ * verification time independent of the first differing byte. PASSWORD_HASH_-
+ * CONCURRENCY bounds how many scrypt calls run at once — v2's cost is
+ * deliberately large (128 * N * r bytes, ~128MB per call at these
+ * parameters), and every login attempt now runs one (S05's dummy-hash
+ * comparison keeps failed attempts on unknown accounts the same shape as real
+ * ones), so an unbounded pile of concurrent attempts is a memory-exhaustion
+ * path of its own if nothing here queues them.
+ *
+ * THE QUEUE ITSELF IS ALSO BOUNDED. A concurrency cap alone still lets a
+ * distributed flood (many IPs, so per-route rate limiting does not help)
+ * queue an unlimited number of waiting requests behind it — the process
+ * degrades on queue memory and latency instead of on scrypt's own memory.
+ * PASSWORD_HASH_QUEUE_MAX caps how many callers may wait for a slot; once
+ * both the active count and the queue are full, gatedScrypt() refuses
+ * outright with `error.code = 'AUTH_CAPACITY'` rather than queuing further,
+ * and the controller maps that to a 503 with Retry-After.
  */
 const crypto = require('crypto');
 const { promisify } = require('util');
@@ -63,14 +72,28 @@ const SCRYPT_V2 = { version: 2, N: 131072, r: 8, p: 1, maxmem: 256 * 1024 * 1024
 // legacy value can still be verified at the cost it was actually hashed with.
 const SCRYPT_LEGACY = { N: 16384, r: 8, p: 1 };
 
+function positiveIntEnv(name, fallback) {
+    const raw = process.env[name];
+    if (raw === undefined || raw === null || raw === '') return fallback;
+    const value = Number.parseInt(raw, 10);
+    return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
 // ---------------------------------------------------------------------------
-// CONCURRENCY CAP
+// CONCURRENCY CAP, WITH A BOUNDED QUEUE BEHIND IT
 // ---------------------------------------------------------------------------
 // A small FIFO queue in front of every scrypt call in this module, legacy and
 // v2 alike. Node's thread pool would otherwise happily start every concurrent
 // request's hash at once; at v2's cost that is a server asking its own
 // memory for N * concurrent-requests worth of scrypt buffers on demand.
-const CONCURRENCY_LIMIT = 8;
+//
+// Both numbers are configurable because the right value depends on the
+// container this actually runs in — a safe starting point for a 512-1024MiB
+// Node process is roughly two active hashes, but that should be benchmarked
+// against the real deployment rather than hard-coded here.
+const PASSWORD_HASH_CONCURRENCY = positiveIntEnv('PASSWORD_HASH_CONCURRENCY', 2);
+const PASSWORD_HASH_QUEUE_MAX = positiveIntEnv('PASSWORD_HASH_QUEUE_MAX', 32);
+
 let active = 0;
 const queue = [];
 
@@ -87,8 +110,23 @@ function runScrypt(password, salt, keylen, options) {
                 });
         };
 
-        if (active < CONCURRENCY_LIMIT) attempt();
-        else queue.push(attempt);
+        if (active < PASSWORD_HASH_CONCURRENCY) {
+            attempt();
+            return;
+        }
+
+        // Every slot is busy and the queue is already at its cap — refuse
+        // outright rather than growing the queue without limit. The caller
+        // (hashCustomerPassword / verifyCustomerPassword) rejects with this
+        // same error; auth controllers map AUTH_CAPACITY to 503.
+        if (queue.length >= PASSWORD_HASH_QUEUE_MAX) {
+            const error = new Error('Too many password operations are already in progress.');
+            error.code = 'AUTH_CAPACITY';
+            reject(error);
+            return;
+        }
+
+        queue.push(attempt);
     });
 }
 

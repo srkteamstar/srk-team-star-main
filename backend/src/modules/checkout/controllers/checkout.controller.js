@@ -56,6 +56,7 @@ const {
 } = require('../../auth/auth.public');
 const { priceCheckout } = require('../services/price-checkout.service');
 const { summaryLimiter, checkoutLimiter } = require('../infrastructure/checkout-rate-limit');
+const { errorTag } = require('../../../shared/error-tag');
 
 // ---- Idempotent-retry helpers ----------------------------------------------
 
@@ -222,7 +223,7 @@ function checkoutController() {
                 payment_methods: PAYMENT_METHODS
             });
         } catch (error) {
-            console.error("Checkout Summary Error:", error);
+            console.error("Checkout Summary Error:", errorTag(error));
             res.status(500).json({ error: "Could not price your cart." });
         }
     });
@@ -538,7 +539,7 @@ function checkoutController() {
                         await supabase.from('shipping_addresses').insert([saved]);
                     }
                 } catch (addressError) {
-                    console.error("Saved-address update failed (order continues):", addressError);
+                    console.error("Saved-address update failed (order continues):", errorTag(addressError));
                 }
             }
 
@@ -667,9 +668,26 @@ function checkoutController() {
                     // checkoutStateFor() returning 'failed' above and is refused
                     // with 409, rather than the key going stale and a SECOND
                     // order being written for the same basket.
-                    console.error("Razorpay order creation failed — cancelling order", order.id, gatewayError);
-                    await supabase.from('orders').update({ status: 'Cancelled' }).eq('id', order.id);
-                    await supabase.from('payments').update({ status: PAYMENT_STATUS.failed }).eq('id', paymentRow.id);
+                    //
+                    // fail_store_payment_setup (migration 040) makes the two
+                    // writes below atomic: it locks both rows, checks they are
+                    // still in the exact pre-failure state ('Pending Payment' /
+                    // 'Created'), and updates both together or not at all — a
+                    // crash or a failure of either write used to be able to
+                    // leave an unpaid order looking live, or a payment row
+                    // orphaned against a cancelled order. The invariant the
+                    // admin console depends on (a Cancelled order paired with a
+                    // Failed payment is an abandoned checkout attempt, hidden
+                    // from both the console and the customer's own order list)
+                    // holds exactly the same either way.
+                    console.error("Razorpay order creation failed — cancelling order", order.id, errorTag(gatewayError));
+                    const { error: failSetupError } = await supabase.rpc('fail_store_payment_setup', {
+                        p_order_id: order.id,
+                        p_payment_id: paymentRow.id
+                    });
+                    if (failSetupError) {
+                        console.error("fail_store_payment_setup RPC failed for order", order.id, errorTag(failSetupError));
+                    }
 
                     return res.status(502).json({
                         error: "We could not reach the payment provider, so your order was not placed. Nothing has been charged — please try again.",
@@ -694,7 +712,7 @@ function checkoutController() {
                 payment: payment || undefined
             });
         } catch (error) {
-            console.error("Checkout Error:", error);
+            console.error("Checkout Error:", errorTag(error));
             if (error && error.code === '23505') {
                 return res.status(409).json({ error: "That looks like a duplicate submission. Check your orders before trying again." });
             }

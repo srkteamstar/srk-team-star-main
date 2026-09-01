@@ -25,6 +25,8 @@
 const express = require('express');
 const { isMissingRelation, isPermissionDenied } = require('../../../core/database/postgrest-errors');
 const { publicCatalogue, publicCatalogueList } = require('../services/public-catalogue.service');
+const { SHARED_READ_CACHE } = require('../../../shared/http-caching');
+const { errorTag } = require('../../../shared/error-tag');
 
 /** @returns {import('express').Router} */
 function publicProductsController() {
@@ -36,18 +38,29 @@ function publicProductsController() {
         try {
             if (paginated) {
                 const result = await publicCatalogueList({ page: req.query.page, pageSize: req.query.pageSize });
+                // Anonymous, read-only, and identical for every visitor asking
+                // right now — set only on a genuine 200, never on the 500 below,
+                // so a shared cache is never told to hold onto a failure. See
+                // shared/http-caching.js for why the ETag half of this needs no
+                // code of its own.
+                res.set('Cache-Control', SHARED_READ_CACHE);
                 return res.status(200).json(result);
             }
 
             const products = await publicCatalogue();
+            res.set('Cache-Control', SHARED_READ_CACHE);
             res.status(200).json(products);
         } catch (error) {
-            console.error("Fetch Public Products Error:", error);
+            console.error("Fetch Public Products Error:", errorTag(error));
 
             // A storefront page must not break because the table isn't set up yet.
             // Missing table and missing grants are both "not provisioned", and an
-            // empty catalogue degrades better than an error banner.
+            // empty catalogue degrades better than an error banner. Still cacheable
+            // — it is still the honest, anonymous answer for everyone asking right
+            // now — but not for as long as a real catalogue: a "not provisioned yet"
+            // response ought to self-correct quickly once a migration actually runs.
             if (isMissingRelation(error) || isPermissionDenied(error)) {
+                res.set('Cache-Control', SHARED_READ_CACHE);
                 return res.status(200).json(paginated ? { items: [], page: 1, pageSize: 0, hasMore: false } : []);
             }
             res.status(500).json({ error: "Failed to fetch products." });

@@ -1,15 +1,7 @@
-# The catalogue and the marketing pages are meant to be found.
-#
-# A checkout and a search results URL are not: they are things a person
-# reaches from inside the site, not things that should sit in someone else's
-# index. Neither is protected BY this file — nothing behind them is reachable
-# without a session, and that is enforced server-side. This only keeps them
-# out of search results, which a well-behaved crawler honours and a
-# badly-behaved one was never going to.
-#
-# The X-Robots-Tag: noindex header on /store/checkout.html is the half a
-# crawler cannot ignore by fetching the page anyway. See the PRIVATE_PATH
-# block in backend/src/core/http/private-paths.js.
+# Public marketing and catalogue pages may be crawled. Robots directives are
+# not access controls; private records remain protected by the application.
+# An absolute Sitemap declaration can be added after the public domain is
+# confirmed. The sitemap itself is available at /sitemap.xml with SITE_ORIGIN.
 
 User-agent: *
 # Checkout remains noindex via HTML and X-Robots-Tag. Allow the crawler to

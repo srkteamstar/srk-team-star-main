@@ -12,6 +12,8 @@
  */
 const express = require('express');
 const { fetchCategoryRows, withImageUrl } = require('../infrastructure/category.repository');
+const { SHARED_READ_CACHE } = require('../../../shared/http-caching');
+const { errorTag } = require('../../../shared/error-tag');
 
 /** @returns {import('express').Router} */
 function publicCategoriesController() {
@@ -34,9 +36,15 @@ function publicCategoriesController() {
                     return { id, name, url_slug, description, parent_id, is_featured, image_url };
                 });
 
+            // Anonymous, read-only, and identical for every visitor asking
+            // right now — set only on this 200, never on the 500 below, so a
+            // shared cache is never told to hold onto a failure. See
+            // shared/http-caching.js for why the ETag half of this needs no
+            // code of its own.
+            res.set('Cache-Control', SHARED_READ_CACHE);
             res.status(200).json(categories);
         } catch (error) {
-            console.error("Fetch Public Categories Error:", error);
+            console.error("Fetch Public Categories Error:", errorTag(error));
             res.status(500).json({ error: "Failed to fetch categories." });
         }
     });

@@ -20,6 +20,7 @@
  * application only ever arrives here.
  */
 const { supabase } = require('../database/supabase');
+const { errorTag } = require('../../shared/error-tag');
 
 // AUTHORIZATION
 //
@@ -138,7 +139,7 @@ async function requireCustomer(req, res, next) {
         req.profile = profile;
         next();
     } catch (error) {
-        console.error("Session lookup failed:", error);
+        console.error("Session lookup failed:", errorTag(error));
         res.status(500).json({ error: "Could not verify your session." });
     }
 }

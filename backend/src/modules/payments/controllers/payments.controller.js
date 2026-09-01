@@ -25,6 +25,7 @@ const { operationalEvent } = require('../../../core/observability/operations');
 const { gatewayPaymentRow, markOrderPaid } = require('../services/settle-payment.service');
 const { applyVerifiedRefund } = require('../services/apply-refund.service');
 const { verifyLimiter } = require('../infrastructure/payment-rate-limit');
+const { errorTag } = require('../../../shared/error-tag');
 
 // Statuses that mean a payment already went through a real capture, whether
 // or not it has since been refunded — mirrors settle-payment.service.js's
@@ -98,7 +99,7 @@ function paymentsController() {
                 order_id: orderId
             });
         } catch (error) {
-            console.error("Payment Verify Error:", error);
+            console.error("Payment Verify Error:", errorTag(error));
             res.status(500).json({ error: "We could not confirm that payment. If money left your account it will settle shortly." });
         }
     });
@@ -216,7 +217,7 @@ function paymentsController() {
                 const existing = await supabase.from('payment_events')
                     .select('*').eq('event_id', eventId).maybeSingle();
                 if (existing.error) {
-                    console.error("Webhook Duplicate Lookup Error:", existing.error);
+                    console.error("Webhook Duplicate Lookup Error:", errorTag(existing.error));
                     return res.status(500).json({ error: "Could not inspect the event." });
                 }
                 if (!existing.data) return res.status(500).json({ error: "Could not inspect the event." });
@@ -225,7 +226,7 @@ function paymentsController() {
                 }
                 eventRow = existing.data;
             } else {
-                console.error("Webhook Store Error:", error);
+                console.error("Webhook Store Error:", errorTag(error));
                 // 500 so Razorpay retries: the event is not safely recorded.
                 return res.status(500).json({ error: "Could not record the event." });
             }
@@ -281,7 +282,7 @@ function paymentsController() {
                     console.error(
                         `Webhook: could not link event ${eventRow.id} to order ${orderId} — ` +
                         `the delivery was processed but the audit row stays unlinked.`,
-                        linkError
+                        errorTag(linkError)
                     );
                 }
             }
@@ -418,7 +419,7 @@ function paymentsController() {
 
             res.status(200).json({ received: true });
         } catch (error) {
-            console.error("Webhook Processing Error:", error);
+            console.error("Webhook Processing Error:", errorTag(error));
             try { await leaveRetryable(error && error.message); } catch (ignored) {}
             await operationalEvent('payment_webhook_processing_error', {
                 event_id: eventId, event_type: eventType,

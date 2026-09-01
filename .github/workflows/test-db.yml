@@ -1,0 +1,222 @@
+name: Real-database integration suite (test:db)
+
+# WHY THIS EXISTS
+# ----------------
+# backend/test/integration/database.test.js (A01) is a real, complete suite —
+# five test groups exercising refund-ledger dedup, the settlement-status
+# regression, the cancellation/capture race, cross-instance session reads and
+# RLS access denial — but it only RUNS when TEST_SUPABASE_URL and
+# TEST_SUPABASE_SERVICE_ROLE_KEY are set. Nothing in this repository sets
+# them anywhere, so `npm run test:db` has always exited 0 having executed
+# zero assertions: a silent skip standing in for a passing gate. This
+# workflow gives it a real, disposable target so the suite actually runs on
+# every push/PR, the way `npm test` and `npm run test:browser` already do.
+#
+# WHAT THIS BUILDS, AND WHY IT IS MORE THAN "start postgres"
+# -------------------------------------------------------------
+# database.test.js talks to its target through @supabase/supabase-js —
+# `.rpc(...)` and `.from(...).select()/.insert()/.update()`, i.e. PostgREST's
+# HTTP API, the same interface the real application and the real Supabase
+# project use. A bare `postgres:` service container answers none of that: it
+# only speaks the Postgres wire protocol. So this workflow stands up two
+# things, not one:
+#
+#   1. Postgres itself — as the `supabase/postgres` image, NOT plain
+#      `postgres`. This is not a style choice: backend/migrations/001, 002
+#      and 004 write into `storage.buckets` / `storage.objects` (product and
+#      category cover images), and every "*_with_image" view later
+#      migrations and application code both depend on left-joins against
+#      `storage.objects`. That schema exists in Supabase's own Postgres image
+#      (the same one the Supabase CLI's `supabase start` runs locally) and
+#      does not exist in vanilla `postgres` — migrations 001-006 would fail
+#      applying to a bare postgres container with "relation storage.buckets
+#      does not exist."
+#   2. PostgREST in front of it, so `supabase-js` has an HTTP API to call at
+#      all. Bootstrapped by hand with a throwaway HS256 JWT secret and two
+#      pre-signed tokens (role: anon, role: service_role) — see "THE JWTS"
+#      below. `--network host` (Linux runners only; this workflow pins
+#      ubuntu-latest, which is Linux) rather than a `services:` entry, so it
+#      can reach Postgres and be reached back at a plain `localhost` port
+#      without depending on inter-service-container DNS.
+#
+# THE JWTS
+# --------
+# PGRST_JWT_SECRET below and the two tokens are fixed, hardcoded values that
+# exist ONLY to authenticate to a database this job deletes at the end of its
+# own run. They are not secrets in any sense that matters — grep this file
+# for `ci-only-` — and must never be reused against a real Supabase project.
+# Generated once with Node's `crypto` (HMAC-SHA256, base64url, no `exp`
+# claim — PostgREST treats a token with no expiry as never expiring, which is
+# fine for a database that will not outlive this job).
+#
+# THE ROLE BOOTSTRAP IS DEFENSIVE ON PURPOSE
+# ----------------------------------------------
+# `supabase/postgres` may already create `anon` / `authenticated` /
+# `service_role` as part of its own startup init scripts (it is built to
+# back the full Supabase stack, where those roles are assumed present).
+# Whether a given tag does was not something this change could confirm by
+# actually running the image — there is no Docker available in the sandbox
+# this workflow was authored in, so nothing here has executed end-to-end.
+# The bootstrap step below is therefore written to be a no-op if the roles
+# already exist (`IF NOT EXISTS` against pg_roles) rather than assume either
+# way. `service_role` specifically needs BYPASSRLS: every table these
+# migrations put `enable row level security` on is granted to service_role
+# at the table level but has no CREATE POLICY anywhere, so table grants alone
+# leave service_role reading zero rows without BYPASSRLS — exactly mirroring
+# how Supabase's own service_role is configured.
+#
+# WHAT THIS WORKFLOW COULD NOT VERIFY
+# ---------------------------------------
+# This file was written and reviewed for correctness against PostgREST v12 /
+# Supabase Postgres documentation, but never actually executed — no Docker
+# daemon was available while authoring it. The most likely failure on its
+# first real run is a version drift between the pinned `supabase/postgres`
+# tag and something a later migration assumes (an extension, a default
+# privilege) that this review did not catch. If it fails, read the Postgres
+# service container's logs first (`docker logs` is not available after the
+# job ends, but GitHub Actions retains the step output) — a migration
+# failure will name the exact statement and relation.
+on:
+  push:
+    branches: [main, payment-test]
+  pull_request:
+    branches: [main, payment-test]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Ephemeral-only. See "THE JWTS" above.
+  PGRST_JWT_SECRET: ci-only-postgrest-jwt-secret-a8ec3a90504649a1d891ad5f7526672b
+  TEST_SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiIsImlzcyI6ImNpLXRlc3QtZGIifQ.Uz0j5phFRlN8XG7XuM9DIoGdG1EQk9jod0W8RoQNJHg
+  TEST_SUPABASE_SERVICE_ROLE_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoic2VydmljZV9yb2xlIiwiaXNzIjoiY2ktdGVzdC1kYiJ9.5Wx9s12lXQfQXWAZ25yJ9Tlvb1WxSR1QiVr5WXNB77o
+  TEST_SUPABASE_URL: http://localhost:54321
+  # database.test.js's deliberate speed bump against ever running by habit —
+  # see its own header comment. Setting it here, in a workflow whose only
+  # job is to run this suite against a target it just created and will
+  # discard, is exactly the one place that speed bump should be pre-cleared.
+  DB_TEST_CONFIRM: yes-this-is-a-disposable-database
+
+jobs:
+  test-db:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        # See the header comment: this is Supabase's own Postgres image
+        # (bundles the storage/auth/realtime schemas migrations 001/002/004
+        # write into), not the vanilla `postgres` image.
+        image: supabase/postgres:15.14.1.167
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Install the Postgres client (psql)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-client
+
+      - name: Bootstrap the PostgREST-facing roles, if they do not already exist
+        # supabase/postgres's own init scripts may already create these — see
+        # "THE ROLE BOOTSTRAP IS DEFENSIVE ON PURPOSE" above. Run as the
+        # `postgres` superuser, which can SET ROLE to any role without an
+        # explicit membership grant, so PostgREST connecting as `postgres`
+        # can switch into anon/service_role per request with no further
+        # grants needed.
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+          DO $$
+          BEGIN
+            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'anon') THEN
+              CREATE ROLE anon NOLOGIN NOINHERIT;
+            END IF;
+            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'authenticated') THEN
+              CREATE ROLE authenticated NOLOGIN NOINHERIT;
+            END IF;
+            IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'service_role') THEN
+              CREATE ROLE service_role NOLOGIN NOINHERIT BYPASSRLS;
+            ELSE
+              ALTER ROLE service_role BYPASSRLS;
+            END IF;
+          END
+          $$;
+          SQL
+
+      - name: Apply backend/migrations/*.sql, in order
+        # Plain lexical sort is numeric order here: every file is a
+        # zero-padded three-digit prefix (001 .. 038 today), the same
+        # ordering AGENTS.md documents ("N files in backend/migrations/, run
+        # in order"). ON_ERROR_STOP=1 so a failing statement fails the job
+        # instead of leaving a half-applied schema that later steps then fail
+        # against with a much more confusing error.
+        env:
+          PGPASSWORD: postgres
+        run: |
+          set -e
+          for f in $(ls backend/migrations/*.sql | sort); do
+            echo "::group::Applying $f"
+            psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f "$f"
+            echo "::endgroup::"
+          done
+
+      - name: Start PostgREST in front of it
+        # --network host (Linux-only, matches ubuntu-latest above): the
+        # simplest way for this container to reach Postgres at localhost:5432
+        # and to be reachable back at localhost:54321, with no dependency on
+        # how GitHub Actions wires services-container networking for a job
+        # that is not itself running in a container.
+        run: |
+          docker run -d --name postgrest --network host \
+            -e PGRST_DB_URI="postgres://postgres:postgres@localhost:5432/postgres" \
+            -e PGRST_DB_SCHEMAS="public" \
+            -e PGRST_DB_ANON_ROLE="anon" \
+            -e PGRST_JWT_SECRET="${PGRST_JWT_SECRET}" \
+            -e PGRST_SERVER_PORT="54321" \
+            postgrest/postgrest:v12.2.12
+
+      - name: Wait for PostgREST to come up
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf "http://localhost:54321/" >/dev/null; then
+              echo "PostgREST is up."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "PostgREST did not become ready in time." >&2
+          docker logs postgrest || true
+          exit 1
+
+      - name: Run the real-database integration suite (npm run test:db)
+        working-directory: backend
+        run: npm run test:db
+
+      - name: Show PostgREST logs
+        if: always()
+        run: docker logs postgrest || true

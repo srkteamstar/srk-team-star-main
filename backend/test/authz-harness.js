@@ -640,6 +640,75 @@ const fakeSupabase = {
             };
         }
 
+        if (name === 'fail_store_payment_setup') {
+            // Mirrors migration 040's fail_store_payment_setup() exactly,
+            // including its idempotent no-op when both rows have already been
+            // retired by an earlier call.
+            const order = db.orders.find(row => String(row.id) === String(args.p_order_id));
+            if (!order) return { data: null, error: { code: 'P0001', message: 'order not found' } };
+
+            const payment = db.payments.find(row => String(row.id) === String(args.p_payment_id)
+                && String(row.order_id) === String(args.p_order_id));
+            if (!payment) return { data: null, error: { code: 'P0001', message: 'payment not found for order' } };
+
+            if (order.status === 'Cancelled' && payment.status === 'Failed') {
+                return { data: null, error: null };
+            }
+
+            if (order.status !== 'Pending Payment' || payment.status !== 'Created') {
+                return {
+                    data: null,
+                    error: { code: 'P0001', message: `order ${order.id} / payment ${payment.id} are not in the pre-failure state` }
+                };
+            }
+
+            order.status = 'Cancelled';
+            payment.status = 'Failed';
+            return { data: null, error: null };
+        }
+
+        if (name === 'update_customer_profile_and_address') {
+            // Mirrors migration 039's update_customer_profile_and_address()
+            // exactly: one profile row, one addressed upserted by user_id,
+            // written together or (via the throw below) not at all.
+            const userId = args.p_user_id;
+            if (userId === null || userId === undefined) {
+                return { data: null, error: { code: 'P0001', message: 'user_id is required' } };
+            }
+
+            const profile = db.user_profiles.find(row => String(row.id) === String(userId));
+            if (!profile) return { data: null, error: { code: 'P0001', message: 'profile not found' } };
+
+            const p = args.p_profile;
+            if (p && Object.keys(p).length) {
+                if (p.full_name !== undefined && p.full_name !== null) profile.full_name = p.full_name;
+                if (p.phone_number !== undefined && p.phone_number !== null) profile.phone_number = p.phone_number;
+                if (p.phone_normalized !== undefined && p.phone_normalized !== null) profile.phone_normalized = p.phone_normalized;
+                // company is the one nullable field — presence of the key, not
+                // truthiness of its value, decides whether it is touched, same
+                // as the SQL's `p_profile ? 'company'`.
+                if (Object.prototype.hasOwnProperty.call(p, 'company')) profile.company = p.company;
+                profile.updated_at = p.updated_at || new Date().toISOString();
+            }
+
+            const a = args.p_address;
+            if (a && Object.keys(a).length) {
+                let row = db.shipping_addresses.find(r => String(r.user_id) === String(userId));
+                if (!row) {
+                    row = { id: ++nextId, user_id: userId };
+                    db.shipping_addresses.push(row);
+                }
+                row.full_address = a.full_address;
+                row.city = a.city;
+                row.state = a.state;
+                row.country = a.country;
+                row.zip_code = a.zip_code;
+                row.updated_at = new Date().toISOString();
+            }
+
+            return { data: null, error: null };
+        }
+
         if (name !== 'create_store_order') return { data: null, error: { message: `unstubbed RPC: ${name}` } };
         if (control.consumeAtomicCheckoutFailure()) {
             return { data: null, error: { message: 'forced atomic checkout failure' } };

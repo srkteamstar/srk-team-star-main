@@ -24,15 +24,41 @@ const { publicProfile } = require('../services/profile-view.service');
 const { resolveIdentifier, startSession } = require('../services/session.service');
 const { passwordProblem, hashCustomerPassword, verifyCustomerPassword, needsUpgrade, dummyHash } = require('../services/customer-password.service');
 const { authLimiter, accountLoginLimiter } = require('../infrastructure/auth-rate-limit');
-
-// S01: every catch block below used to log the raw error object. A
+// S01/S03: every catch block below used to log the raw error object. A
 // Supabase/Postgres error's message can echo the value that caused it back
 // (a unique-violation names the duplicate value; a constraint failure can
 // name the offending column's content), and every route in this file writes
 // or reads account data. A short, stable tag is enough to triage a failure
 // from platform logs without a second copy of anyone's submitted details
-// sitting in them.
-const errorTag = (error) => (error && (error.code || error.name)) || 'unknown_error';
+// sitting in them. Shared now (shared/error-tag.js) so every other
+// controller with the same problem uses the same redaction.
+const { errorTag } = require('../../../shared/error-tag');
+
+// A scrypt flood that fills the password-hashing gate (see
+// customer-password.service.js) is a capacity problem, not a client error —
+// the honest answer is "come back shortly," not a 400 or a 500. The value is
+// small and fixed on purpose: it is a hint for a browser retry, not a promise
+// about queue depth.
+const PASSWORD_CAPACITY_RETRY_SECONDS = 2;
+
+function sendCapacityRefusal(res) {
+    res.set('Retry-After', String(PASSWORD_CAPACITY_RETRY_SECONDS));
+    res.status(503).json({ error: "We're handling a lot of sign-in activity right now. Please try again in a few seconds." });
+}
+
+// Registration used to answer a colliding email or phone with a field-specific
+// 409 ("that email already has an account"), which is a free existence oracle
+// for anyone who can post to this route — repeat with a guessed address and
+// read the status code. Both a genuinely new registration and a collision now
+// answer with exactly this response: same status, same body, nothing that
+// depends on which happened. A real OTP/verification flow is out of scope
+// here (none exists in this codebase yet); this only closes the response-shape
+// leak, not the timing one — the "already exists" path still returns sooner
+// because it never reaches the scrypt hash below, same as it always has.
+const REGISTER_ACCEPTED_MESSAGE = 'If this contact can be registered, verification instructions will follow.';
+function sendRegisterAccepted(res) {
+    return res.status(202).json({ success: true, message: REGISTER_ACCEPTED_MESSAGE });
+}
 
 /** @returns {import('express').Router} */
 function customerAuthController() {
@@ -83,11 +109,10 @@ function customerAuthController() {
             if (byEmail.error) throw byEmail.error;
             if (byPhone.error) throw byPhone.error;
 
-            if (byEmail.data) {
-                return res.status(409).json({ field: 'email', error: "That email already has an account. Sign in instead." });
-            }
-            if (byPhone.data) {
-                return res.status(409).json({ field: 'phone', error: "That phone number already has an account. Sign in instead." });
+            if (byEmail.data || byPhone.data) {
+                // Deliberately not field-specific and not distinguished from
+                // the "created" response below — see sendRegisterAccepted.
+                return sendRegisterAccepted(res);
             }
 
             const row = {
@@ -113,13 +138,18 @@ function customerAuthController() {
             if (error) throw error;
 
             await startSession(req, data.id);
-            res.status(201).json({ customer: await publicProfile(data) });
+            return sendRegisterAccepted(res);
         } catch (error) {
             console.error("Register Error:", errorTag(error));
+            if (error && error.code === 'AUTH_CAPACITY') {
+                return sendCapacityRefusal(res);
+            }
             // 23505 is a unique violation — the two checks above raced, or an
-            // index this route does not know about fired.
+            // index this route does not know about fired. Same response as
+            // any other collision: nothing here should differ from the
+            // "created" path either.
             if (error && error.code === '23505') {
-                return res.status(409).json({ field: 'email', error: "That account already exists. Sign in instead." });
+                return sendRegisterAccepted(res);
             }
             res.status(500).json({ error: "Could not create your account." });
         }
@@ -205,6 +235,9 @@ function customerAuthController() {
             res.status(200).json({ customer: await publicProfile(profile) });
         } catch (error) {
             console.error("Login Error:", errorTag(error));
+            if (error && error.code === 'AUTH_CAPACITY') {
+                return sendCapacityRefusal(res);
+            }
             res.status(500).json({ error: "Could not sign you in." });
         }
     });
@@ -269,9 +302,11 @@ function customerAuthController() {
     });
 
     // ---- Edit my details -------------------------------------------------------
-    // Writes the profile and the one shipping address together. Both halves are
-    // optional: step 02 of signup sends only the address, and Edit Details sends
-    // both.
+    // Writes the profile and the one shipping address together, atomically:
+    // migration 039's update_customer_profile_and_address() locks the profile
+    // row and writes both tables in one transaction, so this route can no
+    // longer leave one half saved and the other not. Both halves are optional:
+    // step 02 of signup sends only the address, and Edit Details sends both.
     //
     // email is not editable here and neither is role_id. The address is upserted
     // against the unique index from migration 011, so a customer can never end up
@@ -284,14 +319,6 @@ function customerAuthController() {
     // field, profile and address alike, is now checked before the first
     // write. A read of the existing address is not a write and stays where
     // it was, ahead of validation, because merging needs it.
-    //
-    // This still reaches the database as two separate calls rather than one
-    // transaction — a single service-only RPC (the audit's suggested shape)
-    // needs a migration this pass does not add. What validating everything
-    // first removes is the FAILURE case: a 400 can no longer follow a write.
-    // What it does not remove is a mid-flight database error between the two
-    // successful-validation writes, which is a narrower, pre-existing risk of
-    // the two-call approach rather than one this change introduces.
     router.patch('/api/auth/me', requireCustomer, async (req, res) => {
         const body = req.body || {};
         const has = (key) => Object.prototype.hasOwnProperty.call(body, key);
@@ -336,8 +363,9 @@ function customerAuthController() {
                 // Merged over what is already saved, so sending only a city does
                 // not blank the street. The columns are NOT NULL, so an absent
                 // field with nothing behind it becomes '' rather than null.
+                // No user_id here — migration 039's RPC takes p_user_id as its
+                // own argument and applies it inside the function.
                 merged = {
-                    user_id: req.profile.id,
                     full_address: has('address_line') ? trimmed(body.address_line) : (existing ? existing.full_address : ''),
                     city: has('city') ? trimmed(body.city) : (existing ? existing.city : ''),
                     state: has('state') ? trimmed(body.state) : (existing ? existing.state : ''),
@@ -365,27 +393,20 @@ function customerAuthController() {
             // anything reach the database.
             if (Object.keys(profileUpdate).length) {
                 profileUpdate.updated_at = new Date().toISOString();
-
-                const { error } = await supabase
-                    .from('user_profiles')
-                    .update(profileUpdate)
-                    .eq('id', req.profile.id);
-
-                if (error) throw error;
             }
 
-            if (merged) {
-                if (existing) {
-                    merged.updated_at = new Date().toISOString();
-                    const { error } = await supabase
-                        .from('shipping_addresses')
-                        .update(merged)
-                        .eq('id', existing.id);
-                    if (error) throw error;
-                } else {
-                    const { error } = await supabase.from('shipping_addresses').insert([merged]);
-                    if (error) throw error;
-                }
+            // Migration 039 owns the transaction: it locks the profile row
+            // `for update` and writes both tables inside it, so a failure
+            // partway through (a bad address, a raced unique phone) can never
+            // leave the profile half saved and the address half not, or the
+            // other way around — the two Supabase calls this used to be could.
+            if (Object.keys(profileUpdate).length || merged) {
+                const { error } = await supabase.rpc('update_customer_profile_and_address', {
+                    p_user_id: req.profile.id,
+                    p_profile: Object.keys(profileUpdate).length ? profileUpdate : null,
+                    p_address: merged
+                });
+                if (error) throw error;
             }
 
             const fresh = await sessionProfile(req);

@@ -2,8 +2,9 @@ const { spawn } = require('child_process');
 const path = require('path');
 
 module.exports = async function globalSetup() {
+    const port = process.env.SRK_TEST_PORT || '3457';
     const server = spawn(process.execPath, [path.join(__dirname, '..', 'authz-harness.js')], {
-        env: Object.assign({}, process.env, { HARNESS_PORT: '3457', SITE_ORIGIN: 'https://storefront.example.test' }),
+        env: Object.assign({}, process.env, { HARNESS_PORT: port, SITE_ORIGIN: 'https://storefront.example.test' }),
         stdio: ['ignore', 'pipe', 'pipe']
     });
 
@@ -16,8 +17,14 @@ module.exports = async function globalSetup() {
         if (server.exitCode !== null) {
             throw new Error('Browser harness exited during startup:\n' + output.join(''));
         }
+        // Do not accidentally test a stale process left on this port by an
+        // interrupted run. Wait for THIS child to confirm it is listening.
+        if (!output.join('').includes('Server running on port ' + port)) {
+            await new Promise(resolve => setTimeout(resolve, 50));
+            continue;
+        }
         try {
-            const response = await fetch('http://127.0.0.1:3457/');
+            const response = await fetch('http://127.0.0.1:' + port + '/');
             if (response.ok) {
                 return async () => {
                     if (!server.killed) server.kill();

@@ -2,7 +2,10 @@
  * modules/orders/controllers/customer-orders.controller.js
  * ============================================================================
  *
- *   GET  /api/orders/mine        requireCustomer, filtered on req.profile.id
+ *   GET  /api/orders/mine        requireCustomer, filtered on req.profile.id,
+ *                                keyset-paginated 50 at a time (?cursor=,
+ *                                X-Next-Cursor response header) — see
+ *                                ORDERS_PAGE_SIZE below and keyset-cursor.js
  *   POST /api/orders/:id/cancel  requireCustomer, exactly one status edge
  *
  * THE HANDSHAKE COMES BACK WITH THE ORDER. `payment` is present only on an
@@ -47,21 +50,22 @@ const { gatewayPaymentRow } = require('../../payments/payments.public');
 const { orderCancelLimiter, orderStatusLimiter } = require('../infrastructure/order-rate-limit');
 const { buildOrderInvoice } = require('../services/order-invoice.service');
 const { accessibleOrder } = require('../services/order-access.service');
+const { encodeCursor, decodeCursor } = require('../../../shared/keyset-cursor');
+const { errorTag } = require('../../../shared/error-tag');
 
 // GET /api/orders/mine used to read every order a customer had ever placed
 // before doing anything else, then fed the whole id list into three more
-// unbounded IN() queries for items/shipping/payments. Bounded here instead:
-// ORDER_HISTORY_LIMIT caps the header read (range()), which automatically
-// caps how large those three child IN() lists can ever get, since orderIds
-// is derived from the (now-bounded) header result.
+// unbounded IN() queries for items/shipping/payments — and, more recently,
+// a fixed ORDER_HISTORY_LIMIT=100 range() capped the header read but left a
+// customer with more than 100 orders unable to reach the rest at all.
 //
-// This is a fixed cap, not cursor pagination — my-orders-module.js (the
-// only consumer, owned separately) still calls this route with no paging
-// parameters and expects a plain array back, so the response shape is
-// unchanged and this is the full result for any customer under the cap.
-// True keyset pagination (a "load more" the customer can reach past it)
-// needs a UI change on that side to be worth adding here.
-const ORDER_HISTORY_LIMIT = 100;
+// ORDERS_PAGE_SIZE keyset-paginates instead: 50 keeps the panel's own page
+// (see my-orders-module.js) at the size a customer actually scans, and
+// keyset — not OFFSET — is what makes "load more" safe to call while a new
+// order is landing. OFFSET 50 after an order is inserted ahead of the window
+// either repeats or skips a row; keyset cannot, because it resumes from a
+// row it already returned rather than from a position it counted to.
+const ORDERS_PAGE_SIZE = 50;
 
 // THE HANDSHAKE-AND-CAN-CANCEL RULE, IN ONE PLACE.
 //
@@ -101,15 +105,55 @@ function customerOrdersController() {
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
 
         try {
-            const { data: orders, error: ordersError } = await supabase
+            // A cursor that fails to decode degrades to page one rather than
+            // a 400 — see keyset-cursor.js. There is no capability to forge:
+            // .eq('user_id', ...) below scopes every row this query can ever
+            // see to the signed-in customer before the cursor is considered
+            // at all, so a tampered value can only reposition them within
+            // their own history.
+            const cursor = decodeCursor(typeof req.query.cursor === 'string' ? req.query.cursor : null);
+
+            let ordersQuery = supabase
                 .from('orders')
                 .select('*')
                 .eq('user_id', req.profile.id)
                 .order('created_at', { ascending: false })
                 .order('id', { ascending: false })
-                .range(0, ORDER_HISTORY_LIMIT - 1);
+                // One row past the page, so "is there more" is read off what
+                // actually came back rather than guessed from the count
+                // asked for — the same reason accessibleOrder() re-asks
+                // Razorpay instead of trusting a stale payments row.
+                .limit(ORDERS_PAGE_SIZE + 1);
 
+            // (created_at, id) both DESC: id is the tie-break for two orders
+            // placed in the same instant, so the compound key is strictly
+            // decreasing and a cursor built from the last row of one page
+            // can never re-match a row already sent.
+            if (cursor && typeof cursor.created_at === 'string' && Number.isFinite(Number(cursor.id))) {
+                ordersQuery = ordersQuery.or(
+                    `created_at.lt.${cursor.created_at},and(created_at.eq.${cursor.created_at},id.lt.${cursor.id})`
+                );
+            }
+
+            const { data: fetched, error: ordersError } = await ordersQuery;
             if (ordersError) throw ordersError;
+
+            const rowsFetched = fetched || [];
+            const hasMore = rowsFetched.length > ORDERS_PAGE_SIZE;
+            const orders = hasMore ? rowsFetched.slice(0, ORDERS_PAGE_SIZE) : rowsFetched;
+
+            // THE BODY STAYS A BARE ARRAY — my-orders-module.js reads it as
+            // the list itself, and so does every existing assertion against
+            // this route. next_cursor rides in a header instead of being
+            // wrapped around the body, the same way the guest order-access
+            // token rides in a header rather than inside the order it
+            // authorises: present only when there is a next page, and never
+            // an empty string once the customer has reached the end of it.
+            if (hasMore) {
+                const last = orders[orders.length - 1];
+                res.setHeader('X-Next-Cursor', encodeCursor({ created_at: last.created_at, id: last.id }));
+            }
+
             if (!orders || orders.length === 0) return res.status(200).json([]);
 
             const orderIds = orders.map(o => o.id);
@@ -235,7 +279,7 @@ function customerOrdersController() {
 
             res.status(200).json(rows);
         } catch (error) {
-            console.error("Fetch My Orders Error:", error);
+            console.error("Fetch My Orders Error:", errorTag(error));
             res.status(500).json({ error: "Failed to fetch your orders." });
         }
     });
@@ -275,7 +319,7 @@ function customerOrdersController() {
                 ...orderStatusView(order, payment)
             });
         } catch (error) {
-            console.error('Fetch Order Status Error:', error);
+            console.error('Fetch Order Status Error:', errorTag(error));
             res.status(500).json({ error: 'Could not check that order.' });
         }
     });
@@ -310,7 +354,7 @@ function customerOrdersController() {
                 payment
             }));
         } catch (error) {
-            console.error('Fetch Customer Invoice Error:', error);
+            console.error('Fetch Customer Invoice Error:', errorTag(error));
             res.status(500).json({ error: 'Failed to load that invoice.' });
         }
     });
@@ -482,7 +526,7 @@ function customerOrdersController() {
             console.log(`Order ${order.id} cancelled by the customer before payment.`);
             res.status(200).json({ cancelled: true, order_id: order.id });
         } catch (error) {
-            console.error("Cancel Order Error:", error);
+            console.error("Cancel Order Error:", errorTag(error));
             res.status(500).json({ error: "Could not cancel that order." });
         }
     });

@@ -48,7 +48,12 @@ function renderPageMetadata(html, requestPath, options = {}) {
     if (/\/store\/(?:checkout|payment)/.test(requestPath)) return html;
     const origin = siteOrigin();
     const pagePath = options.path || canonicalPath(requestPath);
-    let title = options.title || text((html.match(/<title>([\s\S]*?)<\/title>/i) || [])[1]);
+    const pageTitles = {
+        '/': 'Frame-making Machinery, Mouldings & Hardware | SRK Team Star',
+        '/catalogue.html': 'Frame-making Machinery & Materials Catalogue | SRK Team Star',
+        '/store/store.html': 'Shop Frame-making Machinery, Mouldings & Hardware | SRK Team Star'
+    };
+    let title = options.title || pageTitles[pagePath] || text((html.match(/<title>([\s\S]*?)<\/title>/i) || [])[1]);
     if (!/SRK Team Star/i.test(title)) title += ' | SRK Team Star';
     let description = options.description || (html.match(/<meta\s+name="description"\s+content="([^"]*)"/i) || [])[1];
     if (!description && requestPath.startsWith('/legal/')) description = 'Read the ' + title.replace(/\s*\|.*$/, '') + ' for SRK Team Star products, purchases and customer support.';
@@ -78,6 +83,7 @@ function renderPageMetadata(html, requestPath, options = {}) {
         const org = { '@context': 'https://schema.org', '@type': 'Organization', name: 'SRK Team Star' };
         if (origin) Object.assign(org, { '@id': origin + '/#organization', url: origin, logo: origin + '/assets/icons/SRK-Team-Star-Logos/primary.png' });
         tags.push(`<script type="application/ld+json">${json(org)}</script>`);
+        tags.push(`<script type="application/ld+json">${json({ '@context': 'https://schema.org', '@type': 'WebSite', name: 'SRK Team Star', ...(origin ? { url: origin + '/', publisher: { '@id': origin + '/#organization' } } : {}) })}</script>`);
     }
     if (article) html = html.replace(/(<script\b[^>]*type="application\/ld\+json"[^>]*>)([\s\S]*?)(<\/script>)/gi, (full, open, source, close) => {
         try {

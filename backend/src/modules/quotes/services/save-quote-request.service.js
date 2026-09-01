@@ -9,6 +9,7 @@
  * atomic function path automatically.
  */
 const { supabase } = require('../../../core/database/supabase');
+const { errorTag } = require('../../../shared/error-tag');
 
 function isMissingAtomicFunction(error) {
     return Boolean(
@@ -54,7 +55,7 @@ async function legacyCompatibleWrite(request, items) {
     // reports because it is the cause of the failed customer request.
     const cleanup = await supabase.from('quote_requests').delete().eq('id', created.data.id);
     if (cleanup.error) {
-        console.error('Quote compatibility cleanup failed for request', created.data.id, cleanup.error);
+        console.error('Quote compatibility cleanup failed for request', created.data.id, errorTag(cleanup.error));
     }
     throw inserted.error;
 }
