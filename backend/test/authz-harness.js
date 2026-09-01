@@ -224,7 +224,7 @@ const UPSERT_DEFAULT_KEYS = {
 
 // ---- A chainable stub matching the slice of PostgREST that server.js uses ----
 function makeQuery(table) {
-    const state = { table, filters: [], op: 'select', payload: null, wantSingle: null, order: null, count: null, head: false };
+    const state = { table, filters: [], op: 'select', payload: null, wantSingle: null, orders: [], range: null, count: null, head: false };
 
     const rows = () => (db[state.table] || []);
 
@@ -232,6 +232,12 @@ function makeQuery(table) {
         const value = row[f.column];
         if (f.type === 'eq') return String(value) === String(f.value);
         if (f.type === 'in') return f.value.map(String).includes(String(value));
+        // .or('is_active.eq.true,is_active.is.null') — product.repository.js's
+        // active-or-null filter. Any one clause matching is enough, matching
+        // PostgREST's own semantics for a single .or() call.
+        if (f.type === 'or') return f.clauses.some(clause => clause.type === 'is'
+            ? (clause.value === null ? (row[clause.column] === null || row[clause.column] === undefined) : row[clause.column] === clause.value)
+            : String(row[clause.column]) === String(clause.value));
         return true;
     });
 
@@ -276,8 +282,38 @@ function makeQuery(table) {
         },
         eq(column, value) { state.filters.push({ type: 'eq', column, value }); return q; },
         in(column, value) { state.filters.push({ type: 'in', column, value }); return q; },
-        order(column, options) { state.order = { column, asc: !options || options.ascending !== false }; return q; },
+        // The one shape this stub's callers actually send: comma-separated
+        // `column.eq.value` / `column.is.null` clauses, PostgREST's own OR
+        // syntax. Not a general expression parser — just enough of it.
+        or(clauseString) {
+            const clauses = String(clauseString).split(',').map(part => {
+                const match = part.match(/^([a-z_][a-z0-9_]*)\.(eq|is)\.(.+)$/i);
+                if (!match) return null;
+                const [, column, op, rawValue] = match;
+                if (op === 'is') {
+                    const value = rawValue === 'null' ? null : rawValue === 'true' ? true : rawValue === 'false' ? false : rawValue;
+                    return { type: 'is', column, value };
+                }
+                return { type: 'eq', column, value: rawValue };
+            }).filter(Boolean);
+            state.filters.push({ type: 'or', clauses });
+            return q;
+        },
+        order(column, options) {
+            // Multiple .order() calls chain as tie-breakers, PostgREST-style
+            // (product.repository.js orders by name then id). Stored as a
+            // list; run() sorts by each in turn.
+            state.orders.push({ column, asc: !options || options.ascending !== false });
+            return q;
+        },
         limit() { return q; },
+        // .range(from, to) — PostgREST's inclusive offset/limit pagination.
+        // Applied in run(), after sorting, before this stub answers.
+        range(from, to) { state.range = { from, to }; return q; },
+        // core/health/probes.js chains this onto a real request to cancel it
+        // at the readiness budget. The stub has nothing to abort, so it is a
+        // no-op that keeps the chain intact rather than a missing method.
+        abortSignal() { return q; },
         insert(payload) { state.op = 'insert'; state.payload = payload; return q; },
         update(payload) { state.op = 'update'; state.payload = payload; return q; },
         upsert(payload, options) {
@@ -320,10 +356,17 @@ function makeQuery(table) {
                     });
                 });
 
-                if (state.order) {
-                    const { column, asc } = state.order;
-                    data.sort((a, b) => (a[column] > b[column] ? 1 : a[column] < b[column] ? -1 : 0) * (asc ? 1 : -1));
+                if (state.orders && state.orders.length) {
+                    data.sort((a, b) => {
+                        for (const { column, asc } of state.orders) {
+                            const cmp = (a[column] > b[column] ? 1 : a[column] < b[column] ? -1 : 0) * (asc ? 1 : -1);
+                            if (cmp !== 0) return cmp;
+                        }
+                        return 0;
+                    });
                 }
+
+                if (state.range) data = data.slice(state.range.from, state.range.to + 1);
             } else if (state.op === 'insert') {
                 const list = Array.isArray(state.payload) ? state.payload : [state.payload];
                 const unique = UNIQUE_INDEXES[state.table] || [];

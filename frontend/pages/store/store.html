@@ -12,13 +12,13 @@
     <link rel="shortcut icon" href="/assets/optimized/primary-48.b27b377472eb54e7.png" type="image/png" data-asset-source="/assets/icons/SRK-Team-Star-Logos/primary.png">
 
     <link rel="stylesheet" href="/assets/versioned/bf5600950c635f12/tailwind.build.css" data-asset-source="/assets/vendor/tailwind.build.css">
-    <script src="/assets/versioned/da3fa76d9f7f23a6/disable-input-suggestions-module.js" data-asset-source="/js/platform/disable-input-suggestions-module.js"></script>
+    <script defer src="/assets/versioned/da3fa76d9f7f23a6/disable-input-suggestions-module.js" data-asset-source="/js/platform/disable-input-suggestions-module.js"></script>
     <!-- Holds the page still while anything is open over it. First, and on
          every document: the mobile nav panel below needs it, and so does
          every overlay that opens later. -->
-    <script src="/assets/versioned/b23aee6731def735/scroll-lock-module.js" data-asset-source="/js/platform/scroll-lock-module.js"></script>
-    <script src="/assets/versioned/ae976cf8af58d307/responsive-navigation-module.js" data-asset-source="/js/platform/responsive-navigation-module.js"></script>
-    <script src="/assets/versioned/0bf174d39b9abc30/lenis-1.1.18.min.js" data-asset-source="/assets/vendor/lenis-1.1.18.min.js"></script>
+    <script defer src="/assets/versioned/b23aee6731def735/scroll-lock-module.js" data-asset-source="/js/platform/scroll-lock-module.js"></script>
+    <script defer src="/assets/versioned/ae976cf8af58d307/responsive-navigation-module.js" data-asset-source="/js/platform/responsive-navigation-module.js"></script>
+    <script defer src="/assets/versioned/0bf174d39b9abc30/lenis-1.1.18.min.js" data-asset-source="/assets/vendor/lenis-1.1.18.min.js"></script>
 
     <style>
         * {
@@ -587,21 +587,7 @@
 
                             </div>
 
-                            <script>
-                                document.addEventListener('DOMContentLoaded', () => {
-                                    const slider = document.getElementById('bundle-slider');
-                                    const btnPrev = document.getElementById('bundle-prev');
-                                    const btnNext = document.getElementById('bundle-next');
-
-                                    btnNext.addEventListener('click', () => {
-                                        slider.scrollBy({ left: slider.clientWidth, behavior: 'smooth' });
-                                    });
-
-                                    btnPrev.addEventListener('click', () => {
-                                        slider.scrollBy({ left: -slider.clientWidth, behavior: 'smooth' });
-                                    });
-                                });
-                            </script>
+                            <script defer src="/js/modules/storefront/sections/bundle-slider-module.js"></script>
                         </article>
                     </div> <!-- END DYNAMIC VIEW WRAPPER -->
                 </section>
@@ -826,73 +812,30 @@
             </div>
         </div>
     </footer>
-    <script src="/assets/versioned/7a3055125a1719f4/general-scroll-reveal-module.js" data-asset-source="/js/platform/general-scroll-reveal-module.js"></script>
-    <script src="/assets/versioned/a0797181a51289c8/custom-select-module.js" data-asset-source="/js/platform/custom-select-module.js"></script>
-    <script src="/assets/versioned/618056d62e8070ef/product-section-shared-module.js" data-asset-source="/js/shared/product-section-shared-module.js"></script>
+    <script defer src="/assets/versioned/7a3055125a1719f4/general-scroll-reveal-module.js" data-asset-source="/js/platform/general-scroll-reveal-module.js"></script>
+    <script defer src="/assets/versioned/a0797181a51289c8/custom-select-module.js" data-asset-source="/js/platform/custom-select-module.js"></script>
+    <script defer src="/assets/versioned/618056d62e8070ef/product-section-shared-module.js" data-asset-source="/js/shared/product-section-shared-module.js"></script>
     <!-- After product-section-shared-module.js, whose escapeHtml it reuses.
          Before every surface that reads it: the cart, the account overlay,
          the search overlay and the quote overlay. -->
-    <script src="/assets/versioned/997205f55ff48ffe/store-overlay-shared-module.js" data-asset-source="/js/modules/storefront/shared/store-overlay-shared-module.js"></script>
-    <script src="/assets/versioned/3e3674f3884d681e/all-products-section-loader-module.js" data-asset-source="/js/modules/storefront/sections/all-products-section-loader-module.js"></script>
-    <script src="/assets/versioned/3b26dfa75494f7cd/price-format-module.js" data-asset-source="/js/shared/price-format-module.js"></script>
-    <script src="/assets/versioned/93a9742c3858b246/featured-hero-loader.js" data-asset-source="/js/modules/storefront/sections/featured-hero-loader.js"></script>
-    <script src="/assets/versioned/ef189b7c75c41002/featured-categories-loader.js" data-asset-source="/js/modules/storefront/sections/featured-categories-loader.js"></script>
-    <script src="/assets/versioned/441b4203aa09fe61/featured-section-loader.js" data-asset-source="/js/modules/storefront/sections/featured-section-loader.js"></script>
-    <script src="/assets/versioned/ee8ce1293601582f/new-arrivals-section-loader.js" data-asset-source="/js/modules/storefront/sections/new-arrivals-section-loader.js"></script>
-    <script src="/assets/versioned/dc2c5f15bd4fd88b/best-seller-section-loader.js" data-asset-source="/js/modules/storefront/sections/best-seller-section-loader.js"></script>
-    <script>
-        document.addEventListener('DOMContentLoaded', () => {
-            const homeButton = document.querySelector('button[data-policy="home"]');
-            const allNavButtons = document.querySelectorAll('.nav-btn');
+    <script defer src="/assets/versioned/997205f55ff48ffe/store-overlay-shared-module.js" data-asset-source="/js/modules/storefront/shared/store-overlay-shared-module.js"></script>
+    <!-- Registers the click/hash listeners that stand in for
+         request-quote-module.js and product-details-module.js until one of
+         them is actually needed (see P06 / the two type="text/plain" tags
+         below). After store-overlay-shared-module.js, whose chrome both
+         lazy targets need already loaded by the time they themselves run;
+         before every section loader, so no card can be clicked first. -->
+    <script defer src="/js/modules/storefront/shared/lazy-overlay-loader-module.js"></script>
+    <script defer src="/assets/versioned/3e3674f3884d681e/all-products-section-loader-module.js" data-asset-source="/js/modules/storefront/sections/all-products-section-loader-module.js"></script>
+    <script defer src="/assets/versioned/3b26dfa75494f7cd/price-format-module.js" data-asset-source="/js/shared/price-format-module.js"></script>
+    <script defer src="/assets/versioned/93a9742c3858b246/featured-hero-loader.js" data-asset-source="/js/modules/storefront/sections/featured-hero-loader.js"></script>
+    <script defer src="/assets/versioned/ef189b7c75c41002/featured-categories-loader.js" data-asset-source="/js/modules/storefront/sections/featured-categories-loader.js"></script>
+    <script defer src="/assets/versioned/441b4203aa09fe61/featured-section-loader.js" data-asset-source="/js/modules/storefront/sections/featured-section-loader.js"></script>
+    <script defer src="/assets/versioned/ee8ce1293601582f/new-arrivals-section-loader.js" data-asset-source="/js/modules/storefront/sections/new-arrivals-section-loader.js"></script>
+    <script defer src="/assets/versioned/dc2c5f15bd4fd88b/best-seller-section-loader.js" data-asset-source="/js/modules/storefront/sections/best-seller-section-loader.js"></script>
+    <script defer src="/js/modules/storefront/shared/store-sidebar-nav-module.js"></script>
 
-            // Existing Home Button Redirect Logic
-            if (homeButton) {
-                homeButton.addEventListener('click', () => {
-                    // "home" is skip-listed for view-state-restore-module.js, so
-                    // it never gets saved as the section to return to — but that
-                    // alone doesn't erase whatever real section (e.g. All
-                    // Products) was saved a moment earlier, so without this the
-                    // reload below just replays that instead of landing here.
-                    if (window.srkViewState) window.srkViewState.reset();
-
-                    // Redirect the user to the new URL
-                    window.location.href = '/store/store.html';
-                });
-            }
-
-            // New logic to handle active states across the navigation
-            allNavButtons.forEach(button => {
-                button.addEventListener('click', () => {
-
-                    // 1. Remove the active classes from ALL buttons (including home) 
-                    // and add the default hover classes back
-                    allNavButtons.forEach(btn => {
-                        btn.classList.remove('text-[#d4af37]', 'bg-[#d4af37]/10');
-                        btn.classList.add('hover:text-[#d4af37]', 'hover:bg-[#d4af37]/5');
-                    });
-
-                    // 2. Remove the hover classes from the CLICKED button 
-                    // and apply the active classes to it
-                    button.classList.remove('hover:text-[#d4af37]', 'hover:bg-[#d4af37]/5');
-                    button.classList.add('text-[#d4af37]', 'bg-[#d4af37]/10');
-                });
-            });
-        });
-    </script>
-    <script>
-        document.addEventListener('DOMContentLoaded', () => {
-            const assistanceBtn = document.querySelector('button[data-policy="assistance"]');
-
-            if (assistanceBtn) {
-                assistanceBtn.addEventListener('click', () => {
-                    // Redirect directly to contact.html using a relative path
-                    window.location.href = '/contact.html';
-                });
-            }
-        });
-    </script>
-
-    <script src="/assets/versioned/5fa7b4fa884fba28/enquiry-form-module.js" data-asset-source="/js/modules/enquiries/enquiry-form-module.js"></script>
+    <script defer src="/assets/versioned/5fa7b4fa884fba28/enquiry-form-module.js" data-asset-source="/js/modules/enquiries/enquiry-form-module.js"></script>
     <!-- Account: the session first, then the order history that reads it, then
          the overlay that mounts both.
 
@@ -902,72 +845,41 @@
          which. The other order makes every customer a guest. This page has
          always had the pair this way round; store/checkout.html had it
          backwards and was corrected. -->
-    <script src="/assets/versioned/b5396e72fbef1659/customer-session-module.js" data-asset-source="/js/modules/account/customer-session-module.js"></script>
-    <script src="/assets/versioned/fbb7f8c14f16ab50/order-invoice-module.js" data-asset-source="/js/modules/orders/order-invoice-module.js"></script>
-    <script src="/assets/versioned/48caec60133d6834/my-orders-module.js" data-asset-source="/js/modules/account/my-orders-module.js"></script>
-    <script src="/assets/versioned/1635f4994ef63abe/profile-icon-loader.js" data-asset-source="/js/modules/account/profile-icon-loader.js"></script>
-    <script src="/assets/versioned/054acf88ad334818/cart-module.js" data-asset-source="/js/modules/cart/cart-module.js"></script>
-    <script src="/assets/versioned/d986ed55fbab9bc5/store-search-module.js" data-asset-source="/js/modules/search/store-search-module.js"></script>
+    <script defer src="/assets/versioned/b5396e72fbef1659/customer-session-module.js" data-asset-source="/js/modules/account/customer-session-module.js"></script>
+    <script defer src="/assets/versioned/fbb7f8c14f16ab50/order-invoice-module.js" data-asset-source="/js/modules/orders/order-invoice-module.js"></script>
+    <script defer src="/assets/versioned/48caec60133d6834/my-orders-module.js" data-asset-source="/js/modules/account/my-orders-module.js"></script>
+    <script defer src="/assets/versioned/1635f4994ef63abe/profile-icon-loader.js" data-asset-source="/js/modules/account/profile-icon-loader.js"></script>
+    <script defer src="/assets/versioned/054acf88ad334818/cart-module.js" data-asset-source="/js/modules/cart/cart-module.js"></script>
+    <script defer src="/assets/versioned/d986ed55fbab9bc5/store-search-module.js" data-asset-source="/js/modules/search/store-search-module.js"></script>
     <!-- The product detail route product-section-shared-module.js's card
-         comment has been waiting for. After cart-module.js, whose delegated
-         capture listener owns .cart-icon-btn / .buy-now-btn on the same
-         cards - this one guards against those two explicitly. -->
-    <script src="/assets/versioned/6cef4d97fccde411/product-details-module.js" data-asset-source="/js/modules/product-details/product-details-module.js"></script>
-    <script src="/assets/versioned/322050cb4084480f/store-route-context-module.js" data-asset-source="/js/modules/storefront/shared/store-route-context-module.js"></script>
-    <script src="/assets/versioned/891c2ec3ba89e464/request-quote-module.js" data-asset-source="/js/modules/quotes/request-quote-module.js"></script>
-    <script>
-        // Deep-link into a section by its data-policy: /store/store.html#all-products.
-        // This is how off-store CTAs reach a store section, the same way
-        // `#quote` (request-quote-module.js) reaches the quote overlay - the
-        // catalogue's product cards and its footer both land here.
-        //
-        // Registered last but one, so its DOMContentLoaded listener runs after
-        // every section file has registered the handler it clicks into, and
-        // before view-state-restore-module.js - which stands down while a hash
-        // is present, so its saved section cannot overwrite the one asked for.
-        //
-        // The hash stays in the URL. `#quote` drops its own because a refresh
-        // should not reopen a half-filled form; a section is a place, and a
-        // refresh should land back on it.
-        //
-        // "home" and "assistance" are excluded because they navigate, and
-        // "combos" because no section is registered against it - it would only
-        // turn the sidebar gold over whatever was already showing. Same list,
-        // and the same reasoning, as view-state-restore-module.js's data-skip.
-        (() => {
-            const NOT_A_SECTION = ['home', 'assistance', 'quote', 'combos'];
-
-            const route = () => {
-                let requested;
-                try {
-                    requested = decodeURIComponent(window.location.hash.slice(1));
-                } catch (error) {
-                    requested = '';
-                }
-                if (!requested || NOT_A_SECTION.indexOf(requested) !== -1) return;
-
-                const target = document.querySelector(
-                    '.nav-btn[data-policy="' + CSS.escape(requested) + '"]');
-                if (target) target.click();
-            };
-
-            document.addEventListener('DOMContentLoaded', route);
-
-            // The in-page "View All" links are plain <a href="#new-arrivals">
-            // rather than click handlers, so they stay real links - middle-click
-            // and copy-link-address both work - and Back walks the sections in
-            // reverse. Neither hash names an element, so the browser's own
-            // fragment scroll finds nothing and leaves the page where it is.
-            window.addEventListener('hashchange', route);
-        })();
-    </script>
+         comment has been waiting for. NOT loaded here any more (P06) - this
+         tag is inert (type="text/plain" skips both fetch and execution) and
+         only exists so tools/build-web-assets.js keeps its `src` hashed.
+         lazy-overlay-loader-module.js reads that src and injects the real
+         module the first time a card is actually clicked, then calls the
+         exact same window.productDetails.open() this used to self-attach
+         for on every page load. -->
+    <script type="text/plain" data-lazy-module="product-details" src="/assets/versioned/6cef4d97fccde411/product-details-module.js" data-asset-source="/js/modules/product-details/product-details-module.js"></script>
+    <script defer src="/assets/versioned/322050cb4084480f/store-route-context-module.js" data-asset-source="/js/modules/storefront/shared/store-route-context-module.js"></script>
+    <!-- Same as product-details above: inert until
+         lazy-overlay-loader-module.js loads it on first demand (the sidebar
+         button, an unpriced card's "Request price" button, or a #quote
+         arrival from another page). -->
+    <script type="text/plain" data-lazy-module="request-quote" src="/assets/versioned/891c2ec3ba89e464/request-quote-module.js" data-asset-source="/js/modules/quotes/request-quote-module.js"></script>
+    <!-- Deep-link into a section by its data-policy:
+         /store/store.html#all-products. Registered last but one, so its
+         DOMContentLoaded listener runs after every section file has
+         registered the handler it clicks into, and before
+         view-state-restore-module.js - which stands down while a hash is
+         present, so its saved section cannot overwrite the one asked for. -->
+    <script defer src="/js/modules/storefront/shared/store-hash-router-module.js"></script>
     <!-- Must stay last: it restores a view by replaying a click, which only
          works once the handlers it replays into have been registered.
          data-skip lists the buttons that must never be replayed - "home" and
          "assistance" navigate, "quote" opens an overlay, and "combos" swaps
          nothing at all, so replaying it would only turn the sidebar gold over
          whatever content was already there. -->
-    <script src="/assets/versioned/b662e956b58bde38/view-state-restore-module.js" data-skip="home,assistance,quote,combos" data-asset-source="/js/platform/view-state-restore-module.js"></script>
+    <script defer src="/assets/versioned/b662e956b58bde38/view-state-restore-module.js" data-skip="home,assistance,quote,combos" data-asset-source="/js/platform/view-state-restore-module.js"></script>
 </body>
 
 </html>

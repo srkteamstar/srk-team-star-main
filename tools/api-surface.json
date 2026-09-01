@@ -14,10 +14,12 @@
     "legal shell answers a REGEX rather than a literal path, and the health",
     "probes are not under /api.",
     "2026-08-31: public GET product pages, legacy store metadata and sitemap were added for the authorized accessibility/SEO pass. No privileged or mutating routes were added.",
-    "2026-08-31: GET /api/orders/:id/status added for checkout-side payment recovery - same session-or-guest-token boundary as GET /api/orders/:id/invoice, no new authorization surface."
+    "2026-08-31: GET /api/orders/:id/status added for checkout-side payment recovery - same session-or-guest-token boundary as GET /api/orders/:id/invoice, no new authorization surface.",
+    "2026-08-31: GET /index.html added alongside the pre-existing GET / - both now run product-pages.controller.js's hero handler first, which server-renders the landing page's first hero slide from the public catalogue (falling through to the ordinary static render otherwise). Public GET, no new authorization surface."
   ],
   "routes": [
     "GET /",
+    "GET /index.html",
     "GET /products",
     "GET /products/:slug",
     "GET /sitemap.xml",

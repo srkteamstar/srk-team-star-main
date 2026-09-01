@@ -27,9 +27,20 @@
             button?.click();
         }
 
-        if (productId && window.productDetails) {
-            await (window.productSection?.loadProducts?.() || Promise.resolve());
-            window.productDetails.open(productId);
+        if (productId) {
+            // product-details-module.js may not be loaded yet — it is now
+            // fetched on first demand rather than eagerly on every page
+            // load (see lazy-overlay-loader-module.js). Ask for it and wait
+            // rather than checking window.productDetails once and giving up.
+            const ready = window.storeLazyOverlays
+                ? window.storeLazyOverlays.ensureProductDetails()
+                : Promise.resolve();
+            await ready.catch(() => {});
+
+            if (window.productDetails) {
+                await (window.productSection?.loadProducts?.() || Promise.resolve());
+                window.productDetails.open(productId);
+            }
         }
     }
 

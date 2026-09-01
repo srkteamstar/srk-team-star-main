@@ -255,11 +255,29 @@
         // loadProducts() rejects on failure and clears its cache so a later
         // caller can retry; that rejection is caught here exactly as the old
         // fetch's was, and lands on the same empty-hero path below.
+        //
+        // The fallback below only runs if product-section-shared-module.js
+        // failed to load. It pages through GET /api/products/public's
+        // ?page mode the same way loadProducts() does now, rather than
+        // trusting one response to be the whole catalogue.
         try {
             const shared = window.productSection;
-            const data = shared && typeof shared.loadProducts === 'function'
-                ? await shared.loadProducts()
-                : await fetch('/api/products/public', { cache: 'no-store' }).then(r => (r.ok ? r.json() : []));
+            let data;
+            if (shared && typeof shared.loadProducts === 'function') {
+                data = await shared.loadProducts();
+            } else {
+                data = [];
+                let page = 1;
+                for (;;) {
+                    const response = await fetch('/api/products/public?page=' + page, { cache: 'no-store' });
+                    if (!response.ok) break;
+                    const body = await response.json();
+                    const items = Array.isArray(body && body.items) ? body.items : [];
+                    data.push(...items);
+                    if (!body || !body.hasMore) break;
+                    page += 1;
+                }
+            }
             products = (Array.isArray(data) ? data : []).filter(item => item.is_featured === true);
         } catch (error) {
             console.error('Featured hero: could not load products.', error);

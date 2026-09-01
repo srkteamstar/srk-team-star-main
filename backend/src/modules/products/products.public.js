@@ -12,14 +12,19 @@
  * Nothing here can change a product, and no sibling can reach a route.
  *
  * WHO HOLDS WHAT
- *   modules/categories   countProductsByCategory
  *   modules/checkout     findActiveProductsByIds
  *   modules/quotes       findProductsForQuoteByIds
+ *
+ * modules/categories used to hold countProductsByCategory here, to derive a
+ * per-category product count. It was removed: the only caller was the public
+ * categories path, which computed it on every request and never returned it
+ * (see category.repository.js and public-categories.controller.js). A future
+ * admin surface that wants the count back should add its own read port here,
+ * scoped to where it is actually displayed.
  */
 const {
-    countProductsByCategory,
     findActiveProductsByIds,
     findProductsForQuoteByIds
 } = require('./infrastructure/product.repository');
 
-module.exports = { countProductsByCategory, findActiveProductsByIds, findProductsForQuoteByIds };
+module.exports = { findActiveProductsByIds, findProductsForQuoteByIds };

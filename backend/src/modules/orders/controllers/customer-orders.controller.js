@@ -48,6 +48,21 @@ const { orderCancelLimiter, orderStatusLimiter } = require('../infrastructure/or
 const { buildOrderInvoice } = require('../services/order-invoice.service');
 const { accessibleOrder } = require('../services/order-access.service');
 
+// GET /api/orders/mine used to read every order a customer had ever placed
+// before doing anything else, then fed the whole id list into three more
+// unbounded IN() queries for items/shipping/payments. Bounded here instead:
+// ORDER_HISTORY_LIMIT caps the header read (range()), which automatically
+// caps how large those three child IN() lists can ever get, since orderIds
+// is derived from the (now-bounded) header result.
+//
+// This is a fixed cap, not cursor pagination — my-orders-module.js (the
+// only consumer, owned separately) still calls this route with no paging
+// parameters and expects a plain array back, so the response shape is
+// unchanged and this is the full result for any customer under the cap.
+// True keyset pagination (a "load more" the customer can reach past it)
+// needs a UI change on that side to be worth adding here.
+const ORDER_HISTORY_LIMIT = 100;
+
 // THE HANDSHAKE-AND-CAN-CANCEL RULE, IN ONE PLACE.
 //
 // Shared between /api/orders/mine (one customer's whole history) and
@@ -90,7 +105,9 @@ function customerOrdersController() {
                 .from('orders')
                 .select('*')
                 .eq('user_id', req.profile.id)
-                .order('created_at', { ascending: false });
+                .order('created_at', { ascending: false })
+                .order('id', { ascending: false })
+                .range(0, ORDER_HISTORY_LIMIT - 1);
 
             if (ordersError) throw ordersError;
             if (!orders || orders.length === 0) return res.status(200).json([]);
@@ -100,7 +117,11 @@ function customerOrdersController() {
             const [itemsRes, shippingRes, paymentsRes] = await Promise.all([
                 supabase.from('order_items').select('*').in('order_id', orderIds),
                 supabase.from('order_shipping_address').select('*').in('order_id', orderIds),
-                supabase.from('payments').select('*').in('order_id', orderIds)
+                // Sorted here, in SQL, rather than compared date-by-date in
+                // JS below: paymentByOrder only has to keep the first row it
+                // sees per order_id. A full per-order DISTINCT would need a
+                // service-layer RPC (out of this controller's reach here).
+                supabase.from('payments').select('*').in('order_id', orderIds).order('created_at', { ascending: false })
             ]);
 
             if (itemsRes.error) throw itemsRes.error;
@@ -146,14 +167,14 @@ function customerOrdersController() {
             const shippingByOrder = new Map((shippingRes.data || []).map(s => [String(s.order_id), s]));
 
             // An order can carry more than one payment row (a retry after a
-            // failure), so the most recent describes where it actually stands.
+            // failure), so the most recent describes where it actually
+            // stands. The query above already asks for created_at descending,
+            // so the first row this sees for a given order_id is the latest
+            // one — no date comparison needed here, just "first wins".
             const paymentByOrder = new Map();
             (paymentsRes.data || []).forEach(payment => {
                 const key = String(payment.order_id);
-                const existing = paymentByOrder.get(key);
-                if (!existing || new Date(payment.created_at) > new Date(existing.created_at)) {
-                    paymentByOrder.set(key, payment);
-                }
+                if (!paymentByOrder.has(key)) paymentByOrder.set(key, payment);
             });
 
             const rows = orders.map(order => {
