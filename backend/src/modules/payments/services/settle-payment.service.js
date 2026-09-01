@@ -74,6 +74,14 @@ async function gatewayPaymentRow(orderId) {
  * Condition 4 is the one signature-verification-only integrations miss, and
  * it is why migration 014 added a column to store the binding against.
  */
+
+// Statuses that mean "this payment already went through a real capture",
+// whether or not it has since been refunded. A row in any of these must
+// never be re-derived from a fresh gateway fetch — see the comment inside
+// markOrderPaid() on why 'Paid' alone used to be the only one guarded this
+// way, and why that was the bug (F04).
+const CAPTURED_STATUSES = new Set([PAYMENT_STATUS.paid, PAYMENT_STATUS.partiallyRefunded, PAYMENT_STATUS.refunded]);
+
 async function markOrderPaid({ orderId, gatewayPaymentId, gatewayOrderId, source }) {
     const paymentRow = await gatewayPaymentRow(orderId);
 
@@ -81,24 +89,49 @@ async function markOrderPaid({ orderId, gatewayPaymentId, gatewayOrderId, source
         return { ok: false, reason: 'no_payment_row', message: 'No payment is recorded against that order.' };
     }
 
-    // Already done. Returned as success, not as an error: a redelivered
-    // webhook and a callback that raced it are both ordinary, and answering
-    // with a failure would make Razorpay retry forever.
-    if (paymentRow.status === PAYMENT_STATUS.paid) {
-        return { ok: true, already: true, paymentRow };
-    }
-
     if (paymentRow.gateway !== 'razorpay' || !paymentRow.gateway_order_id) {
         return { ok: false, reason: 'not_a_gateway_order', message: 'That order was not set up for online payment.' };
     }
 
-    // ---- Condition 4, before spending a round trip on the others.
+    // ---- Condition 4, before spending a round trip on the others, and
+    // BEFORE any idempotent "already settled" success below. This used to
+    // run AFTER the already-Paid short-circuit, which meant an already-Paid
+    // order returned success for ANY gateway order id / payment id at all —
+    // a genuinely signed tuple for the caller's OWN order, with THIS order's
+    // id substituted in the request body, was enough to learn a completely
+    // different order's paid status and reference. The binding has to be
+    // checked before the row is trusted at all, not just before the row is
+    // written.
     if (String(paymentRow.gateway_order_id) !== String(gatewayOrderId)) {
         console.error(
             `PAYMENT REPLAY REFUSED (${source}): order ${orderId} is bound to ${paymentRow.gateway_order_id}, ` +
             `but ${gatewayOrderId} was presented with payment ${gatewayPaymentId}.`
         );
         return { ok: false, reason: 'order_mismatch', message: 'That payment does not belong to this order.' };
+    }
+
+    // ---- Already captured — Paid, or captured and since refunded. Returned
+    // as success, not as an error: a redelivered webhook and a callback that
+    // raced it are both ordinary, and answering with a failure would make
+    // Razorpay retry forever. Also covers Partially Refunded / Refunded so a
+    // later or out-of-order capture event cannot regress a refunded payment
+    // back toward being re-verified — those rows are settled facts, and (see
+    // migration 035) the database function underneath us treats them the
+    // same way if this check is ever bypassed.
+    //
+    // The transaction id is checked even here: a caller who supplies THIS
+    // order's own gateway_order_id but a DIFFERENT payment id is not a
+    // redelivery, it is either a bug or an attempt to have this order's
+    // already-settled status confirmed against an id that never paid it.
+    if (CAPTURED_STATUSES.has(paymentRow.status)) {
+        if (String(paymentRow.transaction_id) !== String(gatewayPaymentId)) {
+            console.error(
+                `PAYMENT REPLAY REFUSED (${source}): order ${orderId} was settled by transaction ` +
+                `${paymentRow.transaction_id}, but ${gatewayPaymentId} was presented.`
+            );
+            return { ok: false, reason: 'transaction_mismatch', message: 'That payment does not belong to this order.' };
+        }
+        return { ok: true, already: true, paymentRow };
     }
 
     // ---- Ask the gateway.

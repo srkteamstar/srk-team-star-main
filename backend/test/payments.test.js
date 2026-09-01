@@ -94,12 +94,8 @@ async function placeOrder(cookies, n) {
 // A webhook delivery signed the way Razorpay signs one: HMAC over the exact
 // bytes. Built as a string here and sent verbatim, because signing a
 // re-serialised object is the bug this whole route is shaped around.
-async function sendWebhook(eventId, event, entity, options) {
-    const body = JSON.stringify({
-        entity: 'event',
-        event: event,
-        payload: { payment: { entity: entity } }
-    });
+async function postWebhook(eventId, bodyObject, options) {
+    const body = JSON.stringify(bodyObject);
 
     const signature = (options && options.signature !== undefined)
         ? options.signature
@@ -119,6 +115,30 @@ async function sendWebhook(eventId, event, entity, options) {
     const text = await res.text();
     try { payload = JSON.parse(text); } catch { payload = text; }
     return { status: res.status, body: payload };
+}
+
+async function sendWebhook(eventId, event, entity, options) {
+    return postWebhook(eventId, {
+        entity: 'event',
+        event: event,
+        payload: { payment: { entity: entity } }
+    }, options);
+}
+
+// refund.processed carries BOTH the refund entity and the payment entity it
+// refunds — real Razorpay refund webhooks include `payload.payment.entity`
+// alongside `payload.refund.entity`, and applyVerifiedRefund() binds a
+// refund to a payment using exactly that payment entity (gateway_order_id,
+// transaction id), the refund equivalent of Condition 4 for a capture.
+async function sendRefundWebhook(eventId, paymentEntity, refundEntity, options) {
+    return postWebhook(eventId, {
+        entity: 'event',
+        event: 'refund.processed',
+        payload: {
+            payment: { entity: paymentEntity },
+            refund: { entity: refundEntity }
+        }
+    }, options);
 }
 
 (async () => {
@@ -259,6 +279,48 @@ async function sendWebhook(eventId, event, entity, options) {
     check('...and confirming it a second time is a no-op, not an error',
         r.status === 200 && r.body.paid === true && r.body.already === true, JSON.stringify(r.body));
 
+    console.log('\n=== 3b. S08 — AN ALREADY-PAID ORDER CANNOT BE PROBED WITH SOMEONE ELSE\'S TUPLE ===');
+
+    // orderD is now Paid. Before the fix, markOrderPaid() returned success
+    // for an already-Paid row for ANY gateway order id / payment id at all —
+    // the binding was only checked on the way IN to Paid, never on the way
+    // out of the idempotent short-circuit. So a caller holding a genuinely
+    // signed tuple for their OWN, unrelated order (orderB, from section 2 —
+    // still sitting unpaid, but the signature itself is real) could learn
+    // orderD's paid status and reference just by naming orderD in the body.
+    r = await req(buyer, 'POST', '/api/payments/verify', {
+        order_id: orderD.id,                                     // the already-paid victim
+        razorpay_order_id: orderB.gateway_order_id,              // a DIFFERENT order's binding
+        razorpay_payment_id: paymentForB,
+        razorpay_signature: checkoutSignature(orderB.gateway_order_id, paymentForB)  // GENUINE, for orderB
+    });
+    check('a genuinely-signed tuple for a DIFFERENT order cannot probe an already-paid order',
+        r.status === 409 && r.body.reason === 'order_mismatch', JSON.stringify(r.body));
+
+    // Right order, right gateway_order_id — but a payment id that never
+    // settled it. This is not a cross-order replay; it is a caller asking an
+    // already-Paid row to confirm itself against an identity that does not
+    // match what it was actually paid by.
+    r = await req(clean, 'POST', '/api/payments/verify', {
+        order_id: orderD.id,
+        razorpay_order_id: orderD.gateway_order_id,
+        razorpay_payment_id: 'pay_unrelated_attempt',
+        razorpay_signature: checkoutSignature(orderD.gateway_order_id, 'pay_unrelated_attempt')
+    });
+    check('a different transaction id for an already-paid order is refused, not reported paid',
+        r.status === 409 && r.body.reason === 'transaction_mismatch', JSON.stringify(r.body));
+
+    // The genuine redelivery still works exactly as section 3 already showed
+    // — this just proves the two refusals above did not disturb it.
+    r = await req(clean, 'POST', '/api/payments/verify', {
+        order_id: orderD.id,
+        razorpay_order_id: orderD.gateway_order_id,
+        razorpay_payment_id: paidId,
+        razorpay_signature: checkoutSignature(orderD.gateway_order_id, paidId)
+    });
+    check('...and the real tuple for this order still confirms as already-paid',
+        r.status === 200 && r.body.paid === true && r.body.already === true, JSON.stringify(r.body));
+
     console.log('\n=== 4. THE WEBHOOK IS THE AUTHORITY, AND IT REPEATS ITSELF ===');
 
     const webhookBuyer = accountB;
@@ -335,6 +397,135 @@ async function sendWebhook(eventId, event, entity, options) {
     check('the retried event settles the order exactly once',
         retried && retried.payment_status === 'Paid' && retried.status === 'Processing',
         JSON.stringify(retried && { s: retried.status, p: retried.payment_status }));
+
+    console.log('\n=== 4b. REFUNDS — F05 early delivery, F03 dedup, F04 no regression ===');
+
+    // ---- F05: a refund arriving BEFORE the matching capture has settled ----
+    //
+    // orderB (section 2) was only ever used to construct a genuine signature
+    // against a DIFFERENT order; its own payment row is still 'Created'.
+    // Razorpay does not guarantee webhook order, so a refund.processed
+    // delivery for it can genuinely arrive before its payment.captured does.
+    const orderBPaymentEntity = {
+        id: paymentForB,
+        order_id: orderB.gateway_order_id,
+        amount: orderB.amount_paise,
+        currency: 'INR',
+        status: 'captured',
+        method: 'upi',
+        notes: { order_id: String(orderB.id) }
+    };
+    const earlyRefund = {
+        id: 'rfnd_early_1',
+        payment_id: paymentForB,
+        amount: Math.max(1, Math.round(orderB.amount_paise / 2)),
+        currency: 'INR',
+        status: 'processed'
+    };
+
+    r = await sendRefundWebhook('evt_refund_early_1', orderBPaymentEntity, earlyRefund);
+    check('a refund arriving before local capture is answered non-2xx so Razorpay retries',
+        r.status === 503, JSON.stringify(r.body));
+
+    let mineB = await req(buyerB, 'GET', '/api/orders/mine');
+    let stillUnsettledB = (mineB.body || []).find(o => o.id === orderB.id);
+    check('...and the order is left exactly as it was, not silently dropped',
+        stillUnsettledB && stillUnsettledB.status === 'Pending Payment',
+        JSON.stringify(stillUnsettledB && stillUnsettledB.status));
+
+    // The matching capture settles normally...
+    r = await sendWebhook('evt_capture_for_b', 'payment.captured', orderBPaymentEntity);
+    check('...then the matching capture settles normally',
+        r.status === 200 && r.body.received === true, JSON.stringify(r.body));
+
+    // ...and Razorpay's retry of the SAME refund delivery (it never got a 2xx
+    // the first time) now applies instead of being lost.
+    r = await sendRefundWebhook('evt_refund_early_1', orderBPaymentEntity, earlyRefund);
+    check('...and the SAME refund delivery now applies instead of vanishing',
+        r.status === 200 && r.body.received === true && !r.body.rejected, JSON.stringify(r.body));
+
+    mineB = await req(buyerB, 'GET', '/api/orders/mine');
+    const refundedB = (mineB.body || []).find(o => o.id === orderB.id);
+    check('...and the order shows Partially Refunded, not stuck Paid with a missing refund',
+        refundedB && refundedB.payment_status === 'Partially Refunded',
+        JSON.stringify(refundedB && refundedB.payment_status));
+
+    // ---- F03: overlapping deliveries of the SAME refund id are not double-counted ----
+    //
+    // retryOrder (section 4) is Paid via transaction retryPayment. Two
+    // deliveries under DIFFERENT event ids but the SAME Razorpay refund id
+    // simulate exactly the gap F03 closed: event-level dedup
+    // (payment_events.event_id) does not catch this, because these are two
+    // genuinely different deliveries — only the refund ledger's own
+    // (gateway, refund_id) key does. The amount is deliberately more than
+    // half the payment: if dedup ever regressed and the delta were applied
+    // twice, the sum would exceed the payment and either flip the order
+    // straight to 'Refunded' or trip the ledger's own over-refund guard —
+    // either way this test would catch it.
+    const retryPaymentEntity = {
+        id: retryPayment,
+        order_id: retryOrder.gateway_order_id,
+        amount: retryOrder.amount_paise,
+        currency: 'INR',
+        status: 'captured',
+        method: 'upi',
+        notes: { order_id: String(retryOrder.id) }
+    };
+    const dupRefundAmount = Math.max(1, Math.ceil(retryOrder.amount_paise * 3 / 5));
+    const dupRefund = {
+        id: 'rfnd_dup_1',
+        payment_id: retryPayment,
+        amount: dupRefundAmount,
+        currency: 'INR',
+        status: 'processed'
+    };
+
+    r = await sendRefundWebhook('evt_refund_dup_delivery_1', retryPaymentEntity, dupRefund);
+    check('a partial refund is applied', r.status === 200 && r.body.received === true, JSON.stringify(r.body));
+
+    let mineRetry = await req(accountA, 'GET', '/api/orders/mine');
+    const afterFirst = (mineRetry.body || []).find(o => o.id === retryOrder.id);
+    check('...and the order shows Partially Refunded',
+        afterFirst && afterFirst.payment_status === 'Partially Refunded',
+        JSON.stringify(afterFirst && afterFirst.payment_status));
+
+    r = await sendRefundWebhook('evt_refund_dup_delivery_2', retryPaymentEntity, dupRefund);
+    check('a second, overlapping delivery of the SAME refund id is a success, not a second credit',
+        r.status === 200 && r.body.received === true && !r.body.rejected, JSON.stringify(r.body));
+
+    mineRetry = await req(accountA, 'GET', '/api/orders/mine');
+    const afterSecond = (mineRetry.body || []).find(o => o.id === retryOrder.id);
+    check('...and the order is still exactly Partially Refunded, not double-counted into Refunded',
+        afterSecond && afterSecond.payment_status === 'Partially Refunded',
+        JSON.stringify(afterSecond && afterSecond.payment_status));
+
+    // A duplicate refund id claiming a DIFFERENT amount is not the same
+    // event twice — it must be refused, not merged or silently overwritten.
+    const inconsistentRefund = Object.assign({}, dupRefund, { amount: dupRefundAmount + 1 });
+    r = await sendRefundWebhook('evt_refund_dup_delivery_3', retryPaymentEntity, inconsistentRefund);
+    check('a duplicate refund id with a DIFFERENT amount is rejected, not silently accepted',
+        r.status === 200 && r.body.received === true && r.body.rejected === true, JSON.stringify(r.body));
+
+    mineRetry = await req(accountA, 'GET', '/api/orders/mine');
+    const afterInconsistent = (mineRetry.body || []).find(o => o.id === retryOrder.id);
+    check('...and the order status is unchanged by the rejected delivery',
+        afterInconsistent && afterInconsistent.payment_status === 'Partially Refunded',
+        JSON.stringify(afterInconsistent && afterInconsistent.payment_status));
+
+    // ---- F04: a later, out-of-order capture cannot un-refund a payment ----
+    //
+    // A redelivered (or simply late) payment.captured for the SAME
+    // transaction, arriving after the refund above. Must be accepted as
+    // already-settled and must NOT regress the order back to Paid.
+    r = await sendWebhook('evt_capture_after_refund', 'payment.captured', retryPaymentEntity);
+    check('a capture arriving after a refund is accepted as already-settled',
+        r.status === 200 && r.body.received === true, JSON.stringify(r.body));
+
+    mineRetry = await req(accountA, 'GET', '/api/orders/mine');
+    const afterLateCapture = (mineRetry.body || []).find(o => o.id === retryOrder.id);
+    check('...and the order is STILL Partially Refunded, not regressed back to Paid',
+        afterLateCapture && afterLateCapture.payment_status === 'Partially Refunded',
+        JSON.stringify(afterLateCapture && afterLateCapture.payment_status));
 
     console.log('\n=== 5. NOTHING A BROWSER CAN REACH SETS "Paid" ===');
 

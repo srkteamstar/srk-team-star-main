@@ -24,7 +24,9 @@ const PAYMENT_STATUS = {
     created: 'Created',   // a Razorpay order exists, nobody has paid yet
     pending: 'Pending',   // offline, awaiting the sales team
     paid: 'Paid',         // captured AND verified against the gateway
-    failed: 'Failed'
+    failed: 'Failed',
+    partiallyRefunded: 'Partially Refunded', // refund.processed, for less than the full amount — see migration 034
+    refunded: 'Refunded'                     // refund.processed, in full — see migration 034
 };
 
 // How the customer intends to settle when paying OFFLINE. An unrecognised or
