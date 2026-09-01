@@ -282,30 +282,41 @@ edit — only this file's description of it.
 
 ## Still open before live keys
 
-- Migration **028** must be run, and identifier-era accounts with null password
-  hashes need a credential-reset plan before the cutover.
-- Migration **020** written, not run.
 - The reconciliation schedule is **not installed** on any machine
   (`scripts/schedule-reconcile.ps1 -Apply`). The script existing is not the same
   as it running.
 - `GST_RATE`, `SHIPPING_FLAT`, `SHIPPING_FREE_ABOVE` are placeholders.
-- Migration **027** has not been run.
-- Migrations **029–031** must be applied before deploying the quotation,
-  invoice and guest-checkout changes.
-- **Migrations 034–038 have never been executed against any PostgreSQL.**
-  They were written and reviewed as SQL only. Between them they add the
-  refund ledger and its RPC (034), checkout idempotency (035), the cart
-  revision table and `replace_customer_cart` (036), the checkout proof and
-  request fingerprint columns plus a redefined `create_store_order` (037),
-  and the refund-preserving `settle_captured_store_payment` (038). The
-  application code merged for findings F01–F08 CALLS these RPCs — refunds,
-  cart writes and checkout retries all fail at runtime until they are
-  applied, in number order.
-- **034 replaced an earlier file of the same number.** An environment that
-  applied the first 034 has `apply_store_refund()` and a now-unused
-  `payments.refunded_amount_paise`. The current 034 is idempotent and drops
-  the superseded function, but it must be RE-RUN there; a migration runner
-  that records 034 as already applied will skip it silently.
+- **Migration 028's credential-reset plan is still open.** The migration
+  itself is applied (below), but identifier-era accounts with a null
+  password hash are locked out until each is individually walked through a
+  reset — running the migration does not do that on its own.
+
+### Migrations 020–041: confirmed applied, 2026-09-01
+
+All migrations through **041** are live against the production database —
+confirmed directly against it, not inferred. `apply_verified_refund` (034),
+`replace_customer_cart` (036) and `settle_captured_store_payment` (033) were
+each spot-checked with `to_regprocedure()` against their exact signature;
+`update_customer_profile_and_address` (039) and `fail_store_payment_setup`
+(040) the same way; all three of 041's indexes were confirmed present and
+`indisvalid = true` in `pg_index`. Migrations 020, 027, 029–031, 035, 037 and
+038 were not individually re-verified this way — their status rests on the
+operator's direct confirmation that everything through 038 was already
+applied before 039–041 were added. If that ever needs re-proving, the smoke
+checks above are the pattern to repeat for the rest.
+
+The **034-replaced-an-earlier-file** history (an environment that ran the
+superseded first 034 would have an unused `apply_store_refund()` and
+`payments.refunded_amount_paise` sitting alongside the current schema) is
+moot for this database: the signature check above confirmed the *current*
+`apply_verified_refund` is what's live, not a stale duplicate.
+
+**Running `041_order_history_indexes.sql`**: its three `create index
+concurrently` statements must each be submitted as its own single execution —
+pasting the whole file into a SQL editor that wraps multi-statement pastes in
+an implicit transaction fails with `CREATE INDEX CONCURRENTLY cannot run
+inside a transaction block`. See the file's own header for the recovery
+query if a build is ever interrupted mid-way.
 
 ---
 
