@@ -210,7 +210,7 @@ is looking at. The quote overlay is the route for those.
 
 ## Migrations
 
-33 files in `backend/migrations/` as of the date below, run in order — see that
+38 files in `backend/migrations/` as of the date below, run in order — see that
 directory for the current count, since parallel work adds to it between
 updates here. Seven are worth knowing:
 
@@ -250,7 +250,7 @@ this file describing a state the source no longer matched.
 - Customer product navigation is keyboard-operable and public About/Blog pages
   exist (`frontend/pages/about.html`, `frontend/pages/blog/`) — see the
   correction to "Known issues" just below.
-- Numbered migrations extend through at least 033; check `backend/migrations/`
+- Numbered migrations extend through 038; check `backend/migrations/`
   for today's count.
 
 Deployment state (migrations actually run, schedules actually installed,
@@ -292,6 +292,20 @@ edit — only this file's description of it.
 - Migration **027** has not been run.
 - Migrations **029–031** must be applied before deploying the quotation,
   invoice and guest-checkout changes.
+- **Migrations 034–038 have never been executed against any PostgreSQL.**
+  They were written and reviewed as SQL only. Between them they add the
+  refund ledger and its RPC (034), checkout idempotency (035), the cart
+  revision table and `replace_customer_cart` (036), the checkout proof and
+  request fingerprint columns plus a redefined `create_store_order` (037),
+  and the refund-preserving `settle_captured_store_payment` (038). The
+  application code merged for findings F01–F08 CALLS these RPCs — refunds,
+  cart writes and checkout retries all fail at runtime until they are
+  applied, in number order.
+- **034 replaced an earlier file of the same number.** An environment that
+  applied the first 034 has `apply_store_refund()` and a now-unused
+  `payments.refunded_amount_paise`. The current 034 is idempotent and drops
+  the superseded function, but it must be RE-RUN there; a migration runner
+  that records 034 as already applied will skip it silently.
 
 ---
 
