@@ -16,14 +16,23 @@
  */
 const express = require('express');
 const { supabase } = require('../../../core/database/supabase');
-const { requireCustomer, sessionScope, sessionProfile, isBlocked, BLOCKED_MESSAGE, roleNameById, roleIdByName } = require('../../../core/security/guards');
+const { requireCustomer, sessionScope, sessionProfile, isBlocked, roleNameById, roleIdByName } = require('../../../core/security/guards');
 const { EMAIL_PATTERN, MAX_LENGTHS, tooLong, trimmed } = require('../../../shared/validation');
 const { normalizePhone, normalizeEmail, looksLikeEmail } = require('../domain/identifier');
 const { addressForUser } = require('../infrastructure/profile.repository');
 const { publicProfile } = require('../services/profile-view.service');
 const { resolveIdentifier, startSession } = require('../services/session.service');
-const { passwordProblem, hashCustomerPassword, verifyCustomerPassword } = require('../services/customer-password.service');
-const { authLimiter } = require('../infrastructure/auth-rate-limit');
+const { passwordProblem, hashCustomerPassword, verifyCustomerPassword, needsUpgrade, dummyHash } = require('../services/customer-password.service');
+const { authLimiter, accountLoginLimiter } = require('../infrastructure/auth-rate-limit');
+
+// S01: every catch block below used to log the raw error object. A
+// Supabase/Postgres error's message can echo the value that caused it back
+// (a unique-violation names the duplicate value; a constraint failure can
+// name the offending column's content), and every route in this file writes
+// or reads account data. A short, stable tag is enough to triage a failure
+// from platform logs without a second copy of anyone's submitted details
+// sitting in them.
+const errorTag = (error) => (error && (error.code || error.name)) || 'unknown_error';
 
 /** @returns {import('express').Router} */
 function customerAuthController() {
@@ -106,7 +115,7 @@ function customerAuthController() {
             await startSession(req, data.id);
             res.status(201).json({ customer: await publicProfile(data) });
         } catch (error) {
-            console.error("Register Error:", error);
+            console.error("Register Error:", errorTag(error));
             // 23505 is a unique violation — the two checks above raced, or an
             // index this route does not know about fired.
             if (error && error.code === '23505') {
@@ -117,7 +126,24 @@ function customerAuthController() {
     });
 
     // ---- Sign in ---------------------------------------------------------------
-    router.post('/api/auth/login', authLimiter, async (req, res) => {
+    //
+    // S05: unknown identifier, wrong password, a suspended account, a
+    // non-customer role and a legacy no-hash account used to answer with four
+    // different status/body pairs (404, 401, and two distinctly-worded 403s).
+    // Together they let a caller classify an identifier and its account state
+    // without ever needing the password right, and authLimiter only ever
+    // bounded that by IP. Every one of those refusals now folds into
+    // `eligible`, and whichever way it comes out, verifyCustomerPassword()
+    // runs exactly once — against the real hash when eligible, against a
+    // precomputed dummy hash of the same cost otherwise — so a timing
+    // difference cannot separate them either. THE REFUSAL ITSELF IS
+    // UNCHANGED: a suspended, non-customer or hashless account still cannot
+    // sign in here; only what an anonymous caller is told about *why* is.
+    // accountLoginLimiter adds a second, account-keyed budget alongside
+    // authLimiter's per-IP one, so spreading the guessing across addresses no
+    // longer sidesteps every limit — see auth-rate-limit.js for why that
+    // budget can never become a permanent lock on the account it protects.
+    router.post('/api/auth/login', authLimiter, accountLoginLimiter, async (req, res) => {
         const identifier = trimmed(req.body.identifier);
         const password = req.body && req.body.password;
 
@@ -138,75 +164,47 @@ function customerAuthController() {
         }
         const passwordError = passwordProblem(password);
         if (passwordError) return res.status(400).json({ field: 'password', error: passwordError });
+
         try {
             const profile = await resolveIdentifier(identifier);
+            const role = profile ? await roleNameById(profile.role_id) : null;
 
-            if (!profile) {
-                // `account_not_found` is a machine-readable copy of what the
-                // status code and the sentence already say, added so the account
-                // overlay can offer the two ways forward (try another
-                // identifier, or create the account) instead of leaving a red
-                // line under the field and nothing to press. It discloses
-                // nothing the 404 did not — authLimiter is what keeps this from
-                // being an enumeration oracle, and it is unchanged.
-                return res.status(404).json({
-                    account_not_found: true,
-                    field: 'identifier',
-                    error: "We could not find an account with that email or phone."
-                });
-            }
+            const eligible = Boolean(profile)
+                && Boolean(profile.password_hash)
+                && !isBlocked(profile)
+                && role === 'customer';
 
-            // Before the session: a suspended account is refused whoever it
-            // belongs to.
-            if (isBlocked(profile)) {
-                return res.status(403).json({ error: BLOCKED_MESSAGE });
-            }
+            const matched = await verifyCustomerPassword(
+                password,
+                eligible ? profile.password_hash : await dummyHash()
+            );
 
-            // ONLY A CUSTOMER COMES THROUGH THIS DOOR.
-            //
-            // A row that is not a customer is refused here rather than being
-            // handed a session that later checks would have to catch — and it
-            // is refused for the account, not for the role.
-            //
-            // THE ANSWER SAYS NOTHING ABOUT WHY. An earlier version replied
-            // "that is an administrator account", with a flag the account
-            // overlay branched on. It was true and it was helpful to exactly
-            // one person, and it turned a route anybody may call into a way to
-            // ask "is this address privileged?" of any address somebody had
-            // already guessed. Nothing on this site needs that question
-            // answered, so it is not. authLimiter remains the thing that keeps
-            // the identifier check itself from being an enumeration oracle.
-            const role = await roleNameById(profile.role_id);
-
-            if (role !== 'customer') {
-                return res.status(403).json({
-                    field: 'identifier',
-                    error: "That account cannot be used to sign in here."
-                });
-            }
-
-            // A profile created while identifier-only access was enabled may
-            // have no hash. Never turn that legacy state into a password bypass:
-            // it stays locked until its credential is reset out of band.
-            if (!profile.password_hash) {
-                return res.status(403).json({
-                    field: 'password',
-                    error: "This account needs a password reset before it can sign in. Contact us for help."
-                });
-            }
-
-            if (!await verifyCustomerPassword(password, profile.password_hash)) {
+            if (!eligible || !matched) {
                 return res.status(401).json({
                     field: 'password',
-                    error: "That password is not correct."
+                    error: "The sign-in details could not be verified."
                 });
+            }
+
+            // S06: verified above at whatever cost the stored hash actually
+            // used. A legacy value is never rewritten except right here, at
+            // the one moment the plaintext password is already in hand for a
+            // verification that just succeeded. Best-effort: a failed rewrite
+            // does not fail a sign-in that has already been proven correct.
+            if (needsUpgrade(profile.password_hash)) {
+                const upgradedHash = await hashCustomerPassword(password);
+                const { error: upgradeError } = await supabase
+                    .from('user_profiles')
+                    .update({ password_hash: upgradedHash })
+                    .eq('id', profile.id);
+                if (upgradeError) console.error("Password Upgrade Error:", errorTag(upgradeError));
             }
 
             await startSession(req, profile.id);
 
             res.status(200).json({ customer: await publicProfile(profile) });
         } catch (error) {
-            console.error("Login Error:", error);
+            console.error("Login Error:", errorTag(error));
             res.status(500).json({ error: "Could not sign you in." });
         }
     });
@@ -217,7 +215,7 @@ function customerAuthController() {
 
         req.session.destroy((err) => {
             if (err) {
-                console.error("Session Destroy Error:", err);
+                console.error("Session Destroy Error:", errorTag(err));
                 return res.status(500).json({ error: "Failed to sign out." });
             }
             res.clearCookie('srk_sid');
@@ -265,7 +263,7 @@ function customerAuthController() {
 
             res.status(200).json({ customer: await publicProfile(profile) });
         } catch (error) {
-            console.error("Session Read Error:", error);
+            console.error("Session Read Error:", errorTag(error));
             res.status(500).json({ error: "Could not read your session." });
         }
     });
@@ -278,6 +276,22 @@ function customerAuthController() {
     // email is not editable here and neither is role_id. The address is upserted
     // against the unique index from migration 011, so a customer can never end up
     // with two.
+    //
+    // F09: this used to validate the address AFTER the profile update had
+    // already been written to user_profiles. A new name with an empty
+    // address returned 400 for the address and left the name changed behind
+    // it — a failure response that did not mean "nothing saved". Every
+    // field, profile and address alike, is now checked before the first
+    // write. A read of the existing address is not a write and stays where
+    // it was, ahead of validation, because merging needs it.
+    //
+    // This still reaches the database as two separate calls rather than one
+    // transaction — a single service-only RPC (the audit's suggested shape)
+    // needs a migration this pass does not add. What validating everything
+    // first removes is the FAILURE case: a 400 can no longer follow a write.
+    // What it does not remove is a mid-flight database error between the two
+    // successful-validation writes, which is a narrower, pre-existing risk of
+    // the two-call approach rather than one this change introduces.
     router.patch('/api/auth/me', requireCustomer, async (req, res) => {
         const body = req.body || {};
         const has = (key) => Object.prototype.hasOwnProperty.call(body, key);
@@ -312,24 +326,17 @@ function customerAuthController() {
         const touchesAddress = addressKeys.some(has);
 
         try {
-            if (Object.keys(profileUpdate).length) {
-                profileUpdate.updated_at = new Date().toISOString();
+            // A read, not a write — safe to run before every field has
+            // passed validation, and what merging the address against what
+            // is already saved requires.
+            const existing = touchesAddress ? await addressForUser(req.profile.id) : null;
 
-                const { error } = await supabase
-                    .from('user_profiles')
-                    .update(profileUpdate)
-                    .eq('id', req.profile.id);
-
-                if (error) throw error;
-            }
-
+            let merged = null;
             if (touchesAddress) {
-                const existing = await addressForUser(req.profile.id);
-
                 // Merged over what is already saved, so sending only a city does
                 // not blank the street. The columns are NOT NULL, so an absent
                 // field with nothing behind it becomes '' rather than null.
-                const merged = {
+                merged = {
                     user_id: req.profile.id,
                     full_address: has('address_line') ? trimmed(body.address_line) : (existing ? existing.full_address : ''),
                     city: has('city') ? trimmed(body.city) : (existing ? existing.city : ''),
@@ -351,7 +358,23 @@ function customerAuthController() {
                 if (!merged.city) {
                     return res.status(400).json({ field: 'city', error: "Enter a city." });
                 }
+            }
 
+            // Every supplied field — profile and address — has passed
+            // validation. Nothing has been written yet; only now does
+            // anything reach the database.
+            if (Object.keys(profileUpdate).length) {
+                profileUpdate.updated_at = new Date().toISOString();
+
+                const { error } = await supabase
+                    .from('user_profiles')
+                    .update(profileUpdate)
+                    .eq('id', req.profile.id);
+
+                if (error) throw error;
+            }
+
+            if (merged) {
                 if (existing) {
                     merged.updated_at = new Date().toISOString();
                     const { error } = await supabase
@@ -368,7 +391,7 @@ function customerAuthController() {
             const fresh = await sessionProfile(req);
             res.status(200).json({ customer: await publicProfile(fresh) });
         } catch (error) {
-            console.error("Profile Update Error:", error);
+            console.error("Profile Update Error:", errorTag(error));
             if (error && error.code === '23505') {
                 return res.status(409).json({ field: 'phone', error: "That phone number is already on another account." });
             }

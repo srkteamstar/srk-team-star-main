@@ -34,8 +34,7 @@ const express = require('express');
 
 // ---- core: the application's own settings and infrastructure ---------------
 const { applyAppSettings } = require('./core/config/app-settings');
-const { assertProductionConfig } = require('./core/config/runtime');
-const { assertGatewayBootConfig } = require('./core/config/payments');
+const { assertBootConfig } = require('./core/config/boot');
 const { corsMiddleware } = require('./core/http/cors');
 const { csrfOriginGuard } = require('./core/http/csrf');
 const { securityHeaders } = require('./core/http/security-headers');
@@ -44,6 +43,7 @@ const { sessionMiddleware } = require('./core/http/session');
 const { privatePathGuard } = require('./core/http/private-paths');
 const { mountStaticFiles } = require('./core/http/static-files');
 const { apiNotFound } = require('./core/http/not-found');
+const { finalErrorHandler } = require('./core/http/error-handling');
 const { healthRouter } = require('./core/health/probes');
 
 // ---- modules: one bounded context each ------------------------------------
@@ -106,6 +106,13 @@ function createApp() {
     // Registered after every module, so it only ever sees what nothing claimed.
     app.use('/api', apiNotFound);
 
+    // S01/F10: the one place an uncaught error becomes a response, for every
+    // route above. Last in the chain — Express only ever calls a 4-argument
+    // handler like this one when something upstream threw or called
+    // next(error) — and shared by both entry points because it lives here
+    // rather than in server.js or the Vercel adapter.
+    app.use(finalErrorHandler);
+
     return app;
 }
 
@@ -120,8 +127,7 @@ function createApp() {
  * @returns {import('http').Server}
  */
 function start() {
-    assertProductionConfig();
-    assertGatewayBootConfig();
+    assertBootConfig();
 
     const app = createApp();
     const PORT = process.env.PORT || 3000;

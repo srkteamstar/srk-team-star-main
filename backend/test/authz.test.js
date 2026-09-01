@@ -61,20 +61,27 @@ async function req(cookies, method, path, body, extraHeaders) {
 
     console.log('\n=== 1. CUSTOMER SIGN-IN REQUIRES A PASSWORD ===');
 
-    // THE DOOR OPENS FOR CUSTOMERS AND FOR NOBODY ELSE, and it says nothing
-    // about what it refused. An earlier version answered a non-customer
-    // account with a flag naming the role, which turned a route anybody may
-    // call into a way to ask "is this address privileged?" of an address
-    // somebody had already guessed.
+    // S05: unknown identifier, wrong password, a non-customer account and a
+    // legacy no-hash account used to come back as four distinguishable
+    // responses (404, 401, 403, 403-with-a-different-message) — an oracle an
+    // attacker could use to classify an identifier and its account state
+    // without ever getting the password right. Every one of them now answers
+    // with the exact same status and body, asserted below and proven
+    // byte-identical at the end of this section. THE REFUSAL ITSELF IS
+    // UNCHANGED — none of these accounts can sign in — only what an
+    // anonymous caller is told about why is.
     let r = await req(other, 'POST', '/api/auth/login', { identifier: 'other-role@example.test', password: PASSWORD });
-    check('an account that is not a customer is refused here', r.status === 403, JSON.stringify(r));
+    check('an account that is not a customer is refused here',
+        r.status === 401 && r.body.error === 'The sign-in details could not be verified.', JSON.stringify(r));
     check('...and the refusal does not name the role it refused',
         !JSON.stringify(r.body).toLowerCase().includes('admin'), JSON.stringify(r.body));
     r = await req(other, 'GET', '/api/orders/mine');
     check('...and that refusal started no session', r.status === 401, JSON.stringify(r).slice(0, 80));
 
     r = await req(custA, 'POST', '/api/auth/login', { identifier: 'a@example.test', password: 'wrong-password' });
-    check('a wrong password is refused', r.status === 401 && r.body.field === 'password', JSON.stringify(r));
+    const wrongPasswordResponse = r;
+    check('a wrong password is refused',
+        r.status === 401 && r.body.error === 'The sign-in details could not be verified.', JSON.stringify(r));
     r = await req(custA, 'GET', '/api/orders/mine');
     check('...and starts no session', r.status === 401, JSON.stringify(r).slice(0, 80));
 
@@ -88,15 +95,30 @@ async function req(cookies, method, path, body, extraHeaders) {
     const legacy = jar();
     r = await req(legacy, 'POST', '/api/auth/login', { identifier: 'c@example.test', password: PASSWORD });
     check('a legacy profile with no hash is locked, not treated as passwordless',
-        r.status === 403 && r.body.field === 'password', JSON.stringify(r));
+        r.status === 401 && r.body.error === 'The sign-in details could not be verified.', JSON.stringify(r));
     r = await req(legacy, 'GET', '/api/orders/mine');
     check('...and that locked profile received no session', r.status === 401, JSON.stringify(r).slice(0, 80));
 
     const unassigned = jar();
     r = await req(unassigned, 'POST', '/api/auth/login', { identifier: 'unassigned@example.test', password: PASSWORD });
-    check('an account with a missing role fails closed at sign-in', r.status === 403, JSON.stringify(r));
+    check('an account with a missing role fails closed at sign-in',
+        r.status === 401 && r.body.error === 'The sign-in details could not be verified.', JSON.stringify(r));
     r = await req(unassigned, 'GET', '/api/orders/mine');
     check('...and receives no storefront session', r.status === 401, JSON.stringify(r));
+
+    // THE REGRESSION TEST FOR S05 ITSELF: an identifier nobody has ever
+    // registered and a real account's wrong password must be indistinguishable
+    // — same status, same body, field for field. Before the fix this was
+    // 404-with-account_not_found against 401-with-"That password is not
+    // correct." — two different shapes an attacker could tell apart without
+    // a single correct guess.
+    r = await req(jar(), 'POST', '/api/auth/login', { identifier: 'never-registered@example.test', password: PASSWORD });
+    check('an unknown identifier gets the exact same refusal as a wrong password (S05 oracle closed)',
+        r.status === wrongPasswordResponse.status && JSON.stringify(r.body) === JSON.stringify(wrongPasswordResponse.body),
+        `unknown=${JSON.stringify(r)} wrongPassword=${JSON.stringify(wrongPasswordResponse)}`);
+    check('...and an unknown identifier no longer carries account_not_found',
+        r.body.account_not_found === undefined, JSON.stringify(r.body));
+    check('...and does not start a session', !r.body.customer, JSON.stringify(r).slice(0, 90));
 
     console.log('\n=== 2. IDOR — one customer cannot read another\'s orders ===');
     const aOrders = await req(custA, 'GET', '/api/orders/mine');
@@ -155,6 +177,29 @@ async function req(cookies, method, path, body, extraHeaders) {
     r = await req(custA, 'GET', '/api/auth/me');
     check('still a customer after the attempt',
         r.body.customer && r.body.customer.role === 'customer', JSON.stringify(r.body.customer));
+
+    console.log('\n=== 3A. A REJECTED PROFILE UPDATE CANNOT PARTIALLY SAVE (F09) ===');
+    // Reproduces the audit's probe exactly: a valid new name bundled with an
+    // address that fails validation used to write the name to user_profiles
+    // BEFORE the address was even checked, so the 400 that followed did not
+    // mean "nothing saved" — it meant "half of this saved". Every field is
+    // now validated before the first write, so the rejected request below
+    // must leave the name exactly as it was.
+    const beforeF09 = await req(custA, 'GET', '/api/auth/me');
+    const nameBeforeF09 = beforeF09.body.customer.name;
+
+    r = await req(custA, 'PATCH', '/api/auth/me', { name: 'Should Never Stick', address_line: '' });
+    check('a name change bundled with an invalid (empty) address is rejected',
+        r.status === 400, JSON.stringify(r));
+
+    const afterF09 = await req(custA, 'GET', '/api/auth/me');
+    check('...and the name was never written — a 400 here means nothing saved',
+        afterF09.body.customer.name === nameBeforeF09,
+        `expected "${nameBeforeF09}", got "${afterF09.body.customer.name}"`);
+
+    // The positive case still works: a fully valid update writes both halves.
+    r = await req(custA, 'PATCH', '/api/auth/me', { name: nameBeforeF09, city: 'Gohana' });
+    check('a fully valid combined update still saves', r.status === 200, JSON.stringify(r).slice(0, 120));
 
     r = await req(jar(), 'POST', '/api/auth/register',
         { name: 'No Secret', email: 'no-secret@example.test', phone: '9000000098' });
@@ -347,6 +392,50 @@ async function req(cookies, method, path, body, extraHeaders) {
         { form_type: 'enquiry', full_name: 'ok', email: 'e@example.test', message: 'hi' });
     check('a legitimate enquiry still submits', r.status === 200, JSON.stringify(r).slice(0, 90));
 
+    // F10 REGRESSION: wrong field types and shapes used to reach a raw
+    // .trim() call, or a destructuring of something that was never an
+    // object, before any validation ran — crashing into Express's default
+    // 500/HTML page instead of the clean 400 every other bad submission here
+    // gets. formLimiter (enquiry-rate-limit.js) allows 5 requests per IP per
+    // window and this section already spends 3 of them above, so only TWO
+    // more genuinely reach the route below; the rest are deliberately shapes
+    // the JSON parser itself refuses (a bare `null`, malformed syntax) and
+    // never reach formLimiter at all, which is also worth proving on its own
+    // — the parser's own refusal must be a clean 400 too, not a 500.
+    r = await req(anon, 'POST', '/api/submit-form',
+        { form_type: 'enquiry', full_name: 42, email: 'e@example.test', message: 'hi' });
+    check('a numeric name is a clean 400, not a crash into a 500 (F10, the audit\'s own repro)',
+        r.status === 400, JSON.stringify(r).slice(0, 120));
+    r = await req(anon, 'POST', '/api/submit-form', ['not', 'an', 'object']);
+    check('a JSON body that is an array rather than an object is a clean 400', r.status === 400, JSON.stringify(r).slice(0, 120));
+
+    // A bare `null` is valid JSON but not an object; express.json()'s strict
+    // mode already refuses a top-level primitive as a parse error, so this
+    // never reaches the route or formLimiter — proving the parser's own
+    // refusal is a clean 400 (through the shared handler) rather than a
+    // destructuring crash if it ever did reach here.
+    r = await req(anon, 'POST', '/api/submit-form', null);
+    check('a bare null JSON body is a clean 400, not a destructuring crash', r.status === 400, JSON.stringify(r).slice(0, 120));
+
+    // S01/F10 REGRESSION: syntactically malformed JSON must map to a JSON
+    // 400 through the shared final error handler, never Express's default
+    // HTML error page — and never a 500. Sent raw because req() always sends
+    // valid JSON. Also free of formLimiter's budget, for the same reason.
+    const malformedJsonResponse = await fetch(BASE + '/api/submit-form', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{ this is not valid json'
+    });
+    const malformedJsonText = await malformedJsonResponse.text();
+    let malformedJsonBody = null;
+    try { malformedJsonBody = JSON.parse(malformedJsonText); } catch (_) { /* left null on purpose below */ }
+    check('malformed JSON answers 400 (not 500), as JSON (not HTML)',
+        malformedJsonResponse.status === 400 && malformedJsonBody && typeof malformedJsonBody.error === 'string',
+        `status=${malformedJsonResponse.status} body=${malformedJsonText.slice(0, 120)}`);
+    check('...and the response is application/json, not the framework\'s default HTML error page',
+        (malformedJsonResponse.headers.get('content-type') || '').includes('application/json'),
+        String(malformedJsonResponse.headers.get('content-type')));
+
     r = await req(anon, 'POST', '/api/quote-requests', {
         business_name: 'Quantity Test', contact_name: 'Buyer', email: 'buyer@example.test',
         business_address: 'Rajkot, Gujarat',
@@ -377,12 +466,9 @@ async function req(cookies, method, path, body, extraHeaders) {
         r.body.snapshot.lines[0].unit_price === 1000 && r.body.snapshot.lines[0].quantity === 2,
         JSON.stringify(r.body.snapshot.lines[0]));
 
-    console.log('\n=== 9. UNKNOWN IDENTIFIER IS FLAGGED, NOT JUST 404ed ===');
-    r = await req(jar(), 'POST', '/api/auth/login', { identifier: 'nobody@example.test', password: PASSWORD });
-    check('login for an unknown account answers 404 with account_not_found',
-        r.status === 404 && r.body.account_not_found === true, JSON.stringify(r).slice(0, 120));
-    check('...and does not start a session',
-        !r.body.customer, JSON.stringify(r).slice(0, 90));
+    // Section 9 used to be "UNKNOWN IDENTIFIER IS FLAGGED, NOT JUST 404ed" —
+    // the opposite of what S05 requires. That assertion now lives in section
+    // 1, alongside the wrong-password case it must be indistinguishable from.
 
     console.log('\n=== 10. SIGN-OUT ACTUALLY ENDS THE SESSION ===');
     const bye = jar();

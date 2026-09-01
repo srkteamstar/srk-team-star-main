@@ -237,15 +237,19 @@
         return { ok: true, customer: current() };
     }
 
+    // S02: this used to call setCustomer(null) whichever way the request
+    // went, on the theory that a UI showing "signed out" was better than one
+    // stuck showing an account the server had refused to close. It was not —
+    // a synthetic 503 left the server session valid, and a page that then
+    // says "signed out" is a shared device someone walks away from believing
+    // is safe while the httpOnly cookie is still live. The local cache is
+    // only ever cleared after the server confirms the session is gone.
     async function signOut() {
         const result = await postJSON('/api/auth/logout', {});
+        if (!result.ok) return result;
 
-        // Cleared locally either way. A failed logout that leaves the page
-        // still showing an account is worse than one that signs you out of the
-        // UI while the cookie lingers — and the cookie is httpOnly, so this is
-        // the only lever the page has.
         setCustomer(null);
-        return result.ok ? { ok: true } : result;
+        return { ok: true };
     }
 
     // Takes any subset of the editable fields. The address half is upserted
